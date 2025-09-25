@@ -1,5 +1,4 @@
 -- Simple PSX AutoFarm (GUI) — pick best once, equip, use all equipped pets, assign one pet per nearest breakable
--- Paste into a new LocalScript and run
 
 -- ==== CONFIG ====
 local SAFE_DELAY_BETWEEN_ASSIGN = 0.18
@@ -7,6 +6,13 @@ local JOIN_DELAY = 0.06
 local CHANGE_DELAY = 0.04
 local MAIN_LOOP_DELAY = 0.8
 local EQUIP_WAIT = 0.45
+
+-- ==== SAFE DELAY WRAPPER ====
+local function safe_delay(time, func)
+    if type(time) == "number" and type(func) == "function" then
+        task.delay(time, func)
+    end
+end
 
 -- ==== SERVICES ====
 local Players = game:GetService("Players")
@@ -47,13 +53,11 @@ end
 local function GetCoinsRaw()
     local ok, res = CallRemoteByName("Get Coins")
     if ok then
-        -- sometimes wrapped in index 1
         if type(res) == "table" and type(res[1]) == "table" then
             return res[1]
         end
         return res
     end
-    -- fallback remote name
     ok, res = CallRemoteByName("Coins: Get Test")
     if ok then
         if type(res) == "table" and type(res[1]) == "table" then
@@ -130,13 +134,8 @@ end
 
 -- ==== STATE ====
 local Enabled = false
-local SelectedWorld = "Spawn"
-local SelectedArea = "Town"
-
-local trackedPets = {}       -- UIDs currently equipped/tracked
-local petToTarget = {}       -- uid -> breakId
-local targetToPet = {}       -- breakId -> uid
-local petCooldowns = {}      -- uid -> timestamp until can be reassigned
+local trackedPets = {}
+local petToTarget, targetToPet, petCooldowns = {}, {}, {}
 
 -- ==== ASSIGNMENT HELPERS ====
 local function clearAssignment(uid)
@@ -160,20 +159,15 @@ local function freeStaleAssignments(coins)
 end
 
 local function getNearestBreakableForPosition(coins, pos, usedTargets)
-    -- returns closest breakable id not in usedTargets
     local bestId, bestDist = nil, math.huge
     for id, data in pairs(coins) do
-        if type(data) == "table" then
-            if not usedTargets[id] then
-                local p = data.p or data.Position or data.pos
-                if p and typeof(p) == "Vector3" then
-                    local d = (pos - p).Magnitude
-                    if d < bestDist then
-                        bestDist = d
-                        bestId = id
-                    end
-                else
-                    -- sometimes stored as string coords "x,y,z" — ignore for safety
+        if type(data) == "table" and not usedTargets[id] then
+            local p = data.p or data.Position or data.pos
+            if p and typeof(p) == "Vector3" then
+                local d = (pos - p).Magnitude
+                if d < bestDist then
+                    bestDist = d
+                    bestId = id
                 end
             end
         end
@@ -185,30 +179,21 @@ local function assignAllTrackedToNearest(coins)
     if not coins then return end
     local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
-    -- build set of used targets
     local used = {}
     for id, _ in pairs(targetToPet) do used[id] = true end
 
-    -- iterate tracked pets, assign those free
     for _, uid in ipairs(trackedPets) do
-        if not petToTarget[uid] then
-            -- respect cooldown
-            if (petCooldowns[uid] or 0) <= tick() then
-                local nearestId = getNearestBreakableForPosition(coins, hrp.Position, used)
-                if nearestId then
-                    pcall(function()
-                        JoinCoin(nearestId, {uid})
-                    end)
-                    task.wait(JOIN_DELAY)
-                    pcall(function() ChangePetTarget(uid, "Coin", nearestId) end)
-                    task.wait(CHANGE_DELAY)
-                    pcall(function() FarmCoin(nearestId, uid) end)
-                    petToTarget[uid] = nearestId
-                    targetToPet[nearestId] = uid
-                    petCooldowns[uid] = tick()
-                    used[nearestId] = true
-                    task.wait(SAFE_DELAY_BETWEEN_ASSIGN)
-                end
+        if not petToTarget[uid] and (petCooldowns[uid] or 0) <= tick() then
+            local nearestId = getNearestBreakableForPosition(coins, hrp.Position, used)
+            if nearestId then
+                safe_delay(0, function() JoinCoin(nearestId, {uid}) end)
+                safe_delay(JOIN_DELAY, function() ChangePetTarget(uid, "Coin", nearestId) end)
+                safe_delay(JOIN_DELAY + CHANGE_DELAY, function() FarmCoin(nearestId, uid) end)
+                petToTarget[uid] = nearestId
+                targetToPet[nearestId] = uid
+                petCooldowns[uid] = tick()
+                used[nearestId] = true
+                task.wait(SAFE_DELAY_BETWEEN_ASSIGN)
             end
         end
     end
@@ -230,7 +215,7 @@ local function collectOrbsAndBags()
     end
 end
 
--- ==== GUI (minimal essentials) ====
+-- ==== GUI ====
 local function CreateGUI()
     local screenGui = Instance.new("ScreenGui")
     screenGui.Name = "PSX_SimpleAutoFarm"
@@ -281,34 +266,20 @@ local function CreateGUI()
     status.BackgroundTransparency = 1
     status.TextColor3 = Color3.fromRGB(220,220,220)
 
-    -- world/area compact (static defaults)
-    local worldLabel = Instance.new("TextLabel", frame)
-    worldLabel.Size = UDim2.new(1, -20, 0, 20)
-    worldLabel.Position = UDim2.new(0, 10, 0, 124)
-    worldLabel.BackgroundTransparency = 1
-    worldLabel.Text = "World: Spawn | Area: Town"
-    worldLabel.Font = Enum.Font.SourceSans
-    worldLabel.TextSize = 13
-    worldLabel.TextColor3 = Color3.fromRGB(180,180,180)
-
     pickBtn.MouseButton1Click:Connect(function()
         status.Text = "Status: Picking best pets..."
         local chosen = pickTopNFromSave()
         if #chosen == 0 then
-            status.Text = "Status: No pets found to pick."
+            status.Text = "Status: No pets found."
             return
         end
         trackedPets = chosen
-        -- equip them
         for _, uid in ipairs(trackedPets) do
-            local ok, err = EquipPet(uid)
-            if not ok then
-                warn("[AutoFarm] Equip Pet failed for", uid, err)
-            end
+            EquipPet(uid)
             task.wait(0.06)
         end
         task.wait(EQUIP_WAIT)
-        status.Text = ("Status: Picked %d pets. Ready."):format(#trackedPets)
+        status.Text = ("Status: Equipped %d pets."):format(#trackedPets)
     end)
 
     startBtn.MouseButton1Click:Connect(function()
@@ -324,10 +295,7 @@ local function CreateGUI()
         end
     end)
 
-    return {
-        Gui = screenGui,
-        Status = status
-    }
+    return { Gui = screenGui, Status = status }
 end
 
 local ui = CreateGUI()
@@ -336,30 +304,26 @@ local ui = CreateGUI()
 task.spawn(function()
     while true do
         if Enabled then
-            -- if nothing tracked, auto pick once
             if #trackedPets == 0 then
                 trackedPets = pickTopNFromSave()
-                if #trackedPets > 0 then
-                    for _, uid in ipairs(trackedPets) do
-                        pcall(function() EquipPet(uid) end)
-                        task.wait(0.06)
-                    end
-                    task.wait(EQUIP_WAIT)
+                for _, uid in ipairs(trackedPets) do
+                    EquipPet(uid)
+                    task.wait(0.06)
                 end
+                task.wait(EQUIP_WAIT)
             end
 
-            local rawCoins = GetCoinsRaw()
-            local coins = rawCoins
-            if not coins then
-                task.wait(1)
-            else
+            local coins = GetCoinsRaw()
+            if coins then
                 freeStaleAssignments(coins)
                 assignAllTrackedToNearest(coins)
                 collectOrbsAndBags()
+            else
+                task.wait(1)
             end
         end
         task.wait(MAIN_LOOP_DELAY)
     end
 end)
 
-print("[AutoFarm] Loaded. Press Pick & Equip Best (optional) then Start.")
+print("[AutoFarm] ✅ Loaded. Click 'Pick & Equip Best' then 'Start'.")
