@@ -1,4 +1,4 @@
--- PSX AutoFarm — Final: Simple UI + Area-only + One-pet-per-breakable + Minimize + Save position
+-- PSX AutoFarm — Final merged (safe, area-only, one pet per breakable, dark UI, minimize "Hate")
 -- Paste into a NEW LocalScript and run
 
 local ok, mainErr = pcall(function()
@@ -10,8 +10,6 @@ local ok, mainErr = pcall(function()
     local MAIN_LOOP_DELAY = 0.8
     local EQUIP_WAIT = 0.45
     local RETARGET_DELAY = 0.3
-
-    local SAVE_FILENAME = "PSX_AutoFarm_UI_Pos.json" -- stored if writefile/readfile available
 
     -- ==== WORLDS TABLE ====
     local WorldsTable = {
@@ -28,15 +26,12 @@ local ok, mainErr = pcall(function()
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Workspace = game:GetService("Workspace")
-    local HttpService = game:GetService("HttpService")
     local LocalPlayer = Players.LocalPlayer
     assert(LocalPlayer, "LocalPlayer nil - run as LocalScript")
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
     local Network = ReplicatedStorage:FindFirstChild("Network")
-    if not Network then
-        warn("[AutoFarm] ReplicatedStorage.Network not found. Remotes may be missing.")
-    end
+    if not Network then warn("[AutoFarm] ReplicatedStorage.Network not found. Remotes may be missing.") end
 
     -- ==== SAFE REMOTE CALLER ====
     local function CallRemote(name, argsTable)
@@ -55,7 +50,7 @@ local ok, mainErr = pcall(function()
         end
     end
 
-    -- wrappers
+    -- ==== WRAPPERS ====
     local function GetSave() local ok,res = CallRemote("Get Custom Save", {}) if ok then return res end return nil end
     local function GetCoinsRaw() local ok,res = CallRemote("Get Coins", {}) if ok then return res end local ok2,res2 = CallRemote("Coins: Get Test", {}) if ok2 then return res2 end return nil end
     local function EquipPet(uid) return CallRemote("Equip Pet", {uid}) end
@@ -139,10 +134,9 @@ local ok, mainErr = pcall(function()
         return {}
     end
 
-    -- === ASSIGNMENT HELPERS (one pet per breakable) ===
+    -- ==== ASSIGNMENT HELPERS (one pet per breakable) ====
     local function AssignPetToBreakable(petUID, breakId)
         if not petUID or not breakId then return false end
-        -- Use safe delayed remote calls
         safe_delay(0, function() JoinCoin(breakId, {petUID}) end)
         safe_delay(JOIN_DELAY, function() ChangePetTarget(petUID, "Coin", breakId) end)
         safe_delay(JOIN_DELAY + CHANGE_DELAY, function() FarmCoin(breakId, petUID) end)
@@ -235,7 +229,7 @@ local ok, mainErr = pcall(function()
         btn.Font = Enum.Font.SourceSans
         btn.TextSize = 14
         btn.TextColor3 = Color3.new(1,1,1)
-        btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
+        btn.BackgroundColor3 = Color3.fromRGB(20,20,20) -- dark button
         btn.AutoButtonColor = true
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
 
@@ -243,7 +237,7 @@ local ok, mainErr = pcall(function()
         menu.Size = UDim2.new(0, width, 0, math.min(#options*24, 200))
         menu.Position = UDim2.new(0, posX, 0, posY + 46)
         menu.Visible = false
-        menu.BackgroundColor3 = Color3.fromRGB(40,40,40)
+        menu.BackgroundColor3 = Color3.fromRGB(12,12,12) -- darker menu
         Instance.new("UICorner", menu).CornerRadius = UDim.new(0,6)
         local layout = Instance.new("UIListLayout", menu)
         layout.Padding = UDim.new(0,4)
@@ -280,256 +274,127 @@ local ok, mainErr = pcall(function()
             Button = btn,
             Menu = menu,
             Label = label,
-            SetOptions = function(newOptions)
-                populate(newOptions)
-            end
+            SetOptions = function(newOptions) populate(newOptions) end
         }
     end
 
-    -- ===== SAVE / LOAD UI POS =====
-    local function canWriteFile()
-        return type(writefile) == "function" and type(readfile) == "function"
-    end
-
-    local function save_ui_position(data)
-        if not canWriteFile() then return false end
-        pcall(function()
-            local json = HttpService:JSONEncode(data)
-            writefile(SAVE_FILENAME, json)
-        end)
-        return true
-    end
-
-    local function load_ui_position()
-        if not canWriteFile() then return nil end
-        local ok, dat = pcall(function()
-            local content = readfile(SAVE_FILENAME)
-            return HttpService:JSONDecode(content)
-        end)
-        if ok and type(dat) == "table" then
-            return dat
-        end
-        return nil
-    end
-
-    -- ==== GUI CREATION (simple clean small) ====
+    -- ==== GUI (dark, simple) ====
     local function CreateGUI()
-        -- create screengui
         local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "PSX_AutoFarm_GUI_Simple"
+        screenGui.Name = "PSX_AutoFarm_GUI"
         screenGui.ResetOnSpawn = false
         screenGui.Parent = PlayerGui
 
-        -- frame
         local frame = Instance.new("Frame", screenGui)
-        frame.Size = UDim2.new(0, 320, 0, 220)
-        frame.Position = UDim2.new(0.5, -160, 0.5, -110)
-        frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+        frame.Size = UDim2.new(0, 520, 0, 340)
+        frame.Position = UDim2.new(0.12, 0, 0.12, 0)
+        frame.BackgroundColor3 = Color3.fromRGB(10,10,10) -- overall dark
+        frame.Active = true
         frame.ZIndex = 50
         Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
 
-        -- try restore saved position
-        local saved = load_ui_position()
-        if saved and type(saved) == "table" and saved.x and saved.y then
-            pcall(function()
-                frame.Position = UDim2.new(saved.scaleX or 0, saved.x, saved.scaleY or 0, saved.y)
-            end)
-        end
-
-        -- title bar (draggable only by this)
+        -- title bar (draggable)
         local titleBar = Instance.new("Frame", frame)
-        titleBar.Size = UDim2.new(1, 0, 0, 30)
+        titleBar.Size = UDim2.new(1, 0, 0, 34)
         titleBar.Position = UDim2.new(0, 0, 0, 0)
-        titleBar.BackgroundTransparency = 0.12
-        titleBar.BackgroundColor3 = Color3.fromRGB(22,22,22)
-        titleBar.ZIndex = 51
+        titleBar.BackgroundColor3 = Color3.fromRGB(8,8,8)
         Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0,8)
 
         local title = Instance.new("TextLabel", titleBar)
-        title.Size = UDim2.new(1, -48, 1, 0)
-        title.Position = UDim2.new(0, 8, 0, 0)
+        title.Size = UDim2.new(1, -84, 1, 0)
+        title.Position = UDim2.new(0, 10, 0, 0)
         title.BackgroundTransparency = 1
         title.Font = Enum.Font.SourceSansBold
         title.TextSize = 16
         title.TextColor3 = Color3.new(1,1,1)
-        title.Text = "PSX AutoFarm"
+        title.Text = "PSX AutoFarm — One pet per breakable"
 
-        -- minimize button (option A: small "-")
-        local minBtn = Instance.new("TextButton", titleBar)
-        minBtn.Size = UDim2.new(0, 36, 0, 22)
-        minBtn.Position = UDim2.new(1, -44, 0, 4)
-        minBtn.AnchorPoint = Vector2.new(0, 0)
-        minBtn.Text = "—"
-        minBtn.Font = Enum.Font.SourceSansBold
-        minBtn.TextSize = 18
-        minBtn.BackgroundTransparency = 0.2
-        minBtn.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0,6)
+        -- minimize small icon button in title
+        local minBtnTitle = Instance.new("TextButton", titleBar)
+        minBtnTitle.Size = UDim2.new(0, 36, 0, 24)
+        minBtnTitle.Position = UDim2.new(1, -44, 0, 5)
+        minBtnTitle.Text = "—"
+        minBtnTitle.Font = Enum.Font.SourceSansBold
+        minBtnTitle.TextSize = 18
+        minBtnTitle.BackgroundTransparency = 0.15
+        minBtnTitle.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", minBtnTitle).CornerRadius = UDim.new(0,6)
 
-        -- content container (everything below title bar)
+        -- content area
         local content = Instance.new("Frame", frame)
-        content.Size = UDim2.new(1, -16, 1, -46)
-        content.Position = UDim2.new(0, 8, 0, 34)
+        content.Position = UDim2.new(0, 12, 0, 44)
+        content.Size = UDim2.new(0, 496, 0, 280)
         content.BackgroundTransparency = 1
 
-        -- Buttons at top inside content
+        -- Buttons (top)
         local pickBtn = Instance.new("TextButton", content)
-        pickBtn.Size = UDim2.new(0.48, -8, 0, 36)
+        pickBtn.Size = UDim2.new(0, 220, 0, 36)
         pickBtn.Position = UDim2.new(0, 0, 0, 0)
         pickBtn.Text = "Pick Best Pets"
         pickBtn.Font = Enum.Font.SourceSansBold
-        pickBtn.BackgroundColor3 = Color3.fromRGB(70,130,180)
+        pickBtn.TextSize = 14
+        pickBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
         pickBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", pickBtn).CornerRadius = UDim.new(0,6)
 
         local startBtn = Instance.new("TextButton", content)
-        startBtn.Size = UDim2.new(0.48, -8, 0, 36)
-        startBtn.Position = UDim2.new(0, 156, 0, 0)
+        startBtn.Size = UDim2.new(0, 220, 0, 36)
+        startBtn.Position = UDim2.new(0, 232, 0, 0)
         startBtn.Text = "Start"
         startBtn.Font = Enum.Font.SourceSansBold
-        startBtn.BackgroundColor3 = Color3.fromRGB(34,139,34)
+        startBtn.TextSize = 14
+        startBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
         startBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
 
-        -- Dropdowns (5px below buttons)
-        local worldDropdown, areaDropdown
-        -- compute dropdown positions relative to content (buttons top y=0, height=36 -> bottom 36 -> +5 -> 41)
-        local ddY = 36 + 5
+        -- world & area buttons (5px below buttons)
+        local listFrame = Instance.new("Frame", frame)
+        listFrame.Size = UDim2.new(0, 280, 0, 240)
+        listFrame.Position = UDim2.new(0, 12, 0, 92)
+        listFrame.BackgroundColor3 = Color3.fromRGB(6,6,6)
+        Instance.new("UICorner", listFrame).CornerRadius = UDim.new(0,6)
+        listFrame.Visible = false
+        local listLayout = Instance.new("UIListLayout", listFrame)
+        listLayout.Padding = UDim.new(0,6)
+        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
-        worldDropdown = makeDropdown(content, 0, ddY, 150, "World", (function()
-            local t = {}
-            for k,_ in pairs(WorldsTable) do table.insert(t, k) end
-            table.sort(t)
-            return t
-        end)(), function(selected)
-            SelectedWorld = selected
-            local areas = WorldsTable[SelectedWorld] or {}
-            if areaDropdown then
-                areaDropdown.SetOptions(areas)
-                if #areas > 0 then
-                    SelectedArea = areas[1]
-                    areaDropdown.Button.Text = areas[1]
-                else
-                    SelectedArea = ""
-                    areaDropdown.Button.Text = "None"
-                end
-            end
-            -- reset assignments so pets retarget into new area
-            petToTarget = {}
-            targetToPet = {}
-            petCooldowns = {}
-        end)
+        -- World and Area buttons (dropdown style like first code)
+        local worldBtn = Instance.new("TextButton", frame)
+        worldBtn.Size = UDim2.new(0, 220, 0, 36)
+        worldBtn.Position = UDim2.new(0, 12, 0, 80)
+        worldBtn.Text = "World: " .. tostring(SelectedWorld)
+        worldBtn.Font = Enum.Font.SourceSans
+        worldBtn.TextSize = 14
+        worldBtn.BackgroundColor3 = Color3.fromRGB(16,16,16)
+        worldBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", worldBtn).CornerRadius = UDim.new(0,6)
 
-        areaDropdown = makeDropdown(content, 160, ddY, 150, "Area", WorldsTable[SelectedWorld] or {}, function(selected)
-            SelectedArea = selected
-            -- clear assignments when area changes
-            petToTarget = {}
-            targetToPet = {}
-            petCooldowns = {}
-        end)
+        local areaBtn = Instance.new("TextButton", frame)
+        areaBtn.Size = UDim2.new(0, 220, 0, 36)
+        areaBtn.Position = UDim2.new(0, 240, 0, 80)
+        areaBtn.Text = "Area: " .. tostring(SelectedArea)
+        areaBtn.Font = Enum.Font.SourceSans
+        areaBtn.TextSize = 14
+        areaBtn.BackgroundColor3 = Color3.fromRGB(14,14,14)
+        areaBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", areaBtn).CornerRadius = UDim.new(0,6)
 
-        -- status label at bottom of frame
-        local status = Instance.new("TextLabel", frame)
-        status.Size = UDim2.new(1, -20, 0, 36)
-        status.Position = UDim2.new(0, 10, 1, -44)
-        status.BackgroundTransparency = 1
-        status.TextColor3 = Color3.new(1,1,1)
-        status.TextWrapped = true
-        status.Font = Enum.Font.SourceSans
-        status.TextSize = 14
-        status.Text = "Status: Idle"
+        -- status label at bottom-right area of frame
+        local statusLabel = Instance.new("TextLabel", frame)
+        statusLabel.Size = UDim2.new(0.98, -20, 0, 28)
+        statusLabel.Position = UDim2.new(0, 12, 1, -40)
+        statusLabel.BackgroundTransparency = 1
+        statusLabel.Font = Enum.Font.SourceSans
+        statusLabel.TextSize = 14
+        statusLabel.TextColor3 = Color3.fromRGB(220,220,220)
+        statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
 
-        -- draggable by title bar only
-        do
-            local dragging = false
-            local dragStart = nil
-            local startPos = nil
-            titleBar.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                    dragging = true
-                    dragStart = input.Position
-                    startPos = frame.Position
-                    input.Changed:Connect(function()
-                        if input.UserInputState == Enum.UserInputState.End then
-                            dragging = false
-                            -- save position on drag end
-                            pcall(function()
-                                local pos = frame.Position
-                                local data = {
-                                    x = pos.X.Offset,
-                                    y = pos.Y.Offset,
-                                    scaleX = pos.X.Scale,
-                                    scaleY = pos.Y.Scale
-                                }
-                                save_ui_position(data)
-                            end)
-                        end
-                    end)
-                end
-            end)
-            titleBar.InputChanged:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseMovement then
-                    local moveInput = input
-                    -- connect global input changed
-                    game:GetService("UserInputService").InputChanged:Connect(function(i)
-                        if dragging and i == moveInput and dragStart and startPos then
-                            local delta = i.Position - dragStart
-                            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-                        end
-                    end)
-                end
-            end)
-        end
-
-        -- minimize / expand behavior (collapse into small title bar)
-        local collapsed = false
-        local prevSize = frame.Size
-        local prevContentVisible = true
-        minBtn.MouseButton1Click:Connect(function()
-            if not collapsed then
-                -- collapse: shrink frame to titleBar height only
-                prevSize = frame.Size
-                content.Visible = false
-                status.Visible = false
-                frame.Size = UDim2.new(frame.Size.X.Scale, frame.Size.X.Offset, 0, 34)
-                collapsed = true
-            else
-                -- expand
-                frame.Size = prevSize
-                content.Visible = true
-                status.Visible = true
-                collapsed = false
-            end
-            -- save position/size
-            pcall(function()
-                local pos = frame.Position
-                local data = {
-                    x = pos.X.Offset,
-                    y = pos.Y.Offset,
-                    scaleX = pos.X.Scale,
-                    scaleY = pos.Y.Scale
-                }
-                save_ui_position(data)
-            end)
-        end)
-
-        -- titleBar click also toggles expand/collapse if collapsed
-        titleBar.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 and collapsed then
-                -- expand back
-                frame.Size = prevSize
-                content.Visible = true
-                status.Visible = true
-                collapsed = false
-            end
-        end)
-
-        -- Button behaviors
+        -- equip & toggle behavior
         pickBtn.MouseButton1Click:Connect(function()
-            status.Text = "Status: Equipping best pets..."
+            statusLabel.Text = "Equipping best pets..."
             local chosen = pickTopNFromSave()
             if #chosen == 0 then
-                status.Text = "Status: No pets found."
+                statusLabel.Text = "No pets found."
                 return
             end
             trackedPets = chosen
@@ -539,28 +404,163 @@ local ok, mainErr = pcall(function()
                 task.wait(0.06)
             end
             task.wait(EQUIP_WAIT)
-            status.Text = ("Status: Equipped %d pets"):format(#trackedPets)
+            statusLabel.Text = ("Equipped %d pets"):format(#trackedPets)
         end)
 
         startBtn.MouseButton1Click:Connect(function()
             Enabled = not Enabled
-            if Enabled then
-                startBtn.Text = "Stop"
-                startBtn.BackgroundColor3 = Color3.fromRGB(178,34,34)
-                status.Text = ("Status: Farming (%s - %s)"):format(tostring(SelectedWorld), tostring(SelectedArea))
+            startBtn.Text = Enabled and "Stop" or "Start"
+            startBtn.BackgroundColor3 = Enabled and Color3.fromRGB(18,18,18) or Color3.fromRGB(18,18,18)
+            statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
+        end)
+
+        equipBtn = Instance.new("TextButton", frame) -- optional remote equip button left of toggle (kept minimal)
+        equipBtn.Size = UDim2.new(0, 120, 0, 28)
+        equipBtn.Position = UDim2.new(0, 12, 1, -76)
+        equipBtn.Text = "Equip Best (Remote)"
+        equipBtn.Font = Enum.Font.SourceSans
+        equipBtn.TextSize = 12
+        equipBtn.BackgroundColor3 = Color3.fromRGB(16,16,16)
+        equipBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", equipBtn).CornerRadius = UDim.new(0,6)
+
+        equipBtn.MouseButton1Click:Connect(function()
+            local ok = EquipBestPetsRemote()
+            if ok then
+                statusLabel.Text = "Called remote Equip Best."
+                task.wait(0.6)
+                trackedPets = GetEquippedPetUIDs()
             else
-                startBtn.Text = "Start"
-                startBtn.BackgroundColor3 = Color3.fromRGB(34,139,34)
-                status.Text = "Status: Stopped"
+                warn("[AutoFarm] Equip Best remote missing/failed.")
             end
         end)
 
+        -- listFrame helpers (clear & show worlds/areas) - uses first-code behavior
+        local function ClearList()
+            for _,c in ipairs(listFrame:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        end
+
+        local function ShowWorlds()
+            ClearList()
+            listFrame.Visible = true
+            for w, _ in pairs(WorldsTable) do
+                local btn = Instance.new("TextButton", listFrame)
+                btn.Size = UDim2.new(1, -12, 0, 28)
+                btn.BackgroundColor3 = Color3.fromRGB(16,16,16)
+                btn.TextColor3 = Color3.new(1,1,1)
+                btn.Font = Enum.Font.SourceSans
+                btn.TextSize = 14
+                btn.Text = w
+                Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+                btn.MouseButton1Click:Connect(function()
+                    SelectedWorld = w
+                    worldBtn.Text = "World: " .. SelectedWorld
+                    local areas = WorldsTable[SelectedWorld] or {}
+                    SelectedArea = areas[1] or ""
+                    areaBtn.Text = "Area: " .. SelectedArea
+                    listFrame.Visible = false
+                    -- clear assignments to retarget
+                    petToTarget = {}
+                    targetToPet = {}
+                    petCooldowns = {}
+                    statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
+                end)
+            end
+        end
+
+        local function ShowAreas()
+            ClearList()
+            listFrame.Visible = true
+            local areas = WorldsTable[SelectedWorld] or {}
+            for _, a in ipairs(areas) do
+                local btn = Instance.new("TextButton", listFrame)
+                btn.Size = UDim2.new(1, -12, 0, 28)
+                btn.BackgroundColor3 = Color3.fromRGB(14,14,14)
+                btn.TextColor3 = Color3.new(1,1,1)
+                btn.Font = Enum.Font.SourceSans
+                btn.TextSize = 14
+                btn.Text = a
+                Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+                btn.MouseButton1Click:Connect(function()
+                    SelectedArea = a
+                    areaBtn.Text = "Area: " .. SelectedArea
+                    listFrame.Visible = false
+                    -- clear assignments to retarget
+                    petToTarget = {}
+                    targetToPet = {}
+                    petCooldowns = {}
+                    statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
+                end)
+            end
+        end
+
+        worldBtn.MouseButton1Click:Connect(ShowWorlds)
+        areaBtn.MouseButton1Click:Connect(ShowAreas)
+
+        -- Minimize icon (Hate)
+        local iconGui = Instance.new("ScreenGui")
+        iconGui.Name = "PSX_AutoFarm_MinIcon"
+        iconGui.Parent = PlayerGui
+
+        local icon = Instance.new("TextButton", iconGui)
+        icon.Name = "PSX_AutoFarm_MinIconBtn"
+        icon.Size = UDim2.new(0, 96, 0, 36)
+        icon.Position = UDim2.new(0, 8, 0, 8)
+        icon.Text = "Hate"
+        icon.Font = Enum.Font.SourceSansBold
+        icon.TextSize = 16
+        icon.TextColor3 = Color3.new(1,1,1)
+        icon.BackgroundColor3 = Color3.fromRGB(18,18,18)
+        Instance.new("UICorner", icon).CornerRadius = UDim.new(0,6)
+        icon.Visible = false
+        icon.Active = true
+        icon.Draggable = true
+
+        icon.MouseButton1Click:Connect(function()
+            icon.Visible = false
+            frame.Visible = true
+        end)
+
+        -- title bar dragging (only title bar)
+        do
+            local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
+            titleBar.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    dragging = true
+                    dragStart = input.Position
+                    startPos = frame.Position
+                    input.Changed:Connect(function()
+                        if input.UserInputState == Enum.UserInputState.End then
+                            dragging = false
+                        end
+                    end)
+                end
+            end)
+            titleBar.InputChanged:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseMovement then
+                    dragInput = input
+                end
+            end)
+            game:GetService("UserInputService").InputChanged:Connect(function(input)
+                if input == dragInput and dragging and dragStart and startPos then
+                    local delta = input.Position - dragStart
+                    frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                end
+            end)
+        end
+
+        -- minimize from title
+        minBtnTitle.MouseButton1Click:Connect(function()
+            frame.Visible = false
+            icon.Visible = true
+            listFrame.Visible = false
+        end)
+
         return {
-            Gui = screenGui,
+            ScreenGui = screenGui,
             Frame = frame,
-            Status = status,
-            WorldDropdown = worldDropdown,
-            AreaDropdown = areaDropdown
+            IconGui = iconGui,
+            StatusLabel = statusLabel
         }
     end
 
@@ -570,7 +570,7 @@ local ok, mainErr = pcall(function()
     task.spawn(function()
         while true do
             if Enabled then
-                -- ensure pets equipped (if none)
+                -- ensure pets equipped
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
                     for _, uid in ipairs(trackedPets) do
@@ -582,22 +582,22 @@ local ok, mainErr = pcall(function()
 
                 local coins = GetCoinsRaw()
                 if not coins then
-                    if ui and ui.Status then ui.Status.Text = "Status: Waiting for coins..." end
+                    if ui and ui.StatusLabel then ui.StatusLabel.Text = "Waiting for coins..." end
                     task.wait(1)
                 else
-                    -- update status label (explicit with selected)
-                    if ui and ui.Status then ui.Status.Text = ("Status: Farming (%s - %s)"):format(tostring(SelectedWorld), tostring(SelectedArea)) end
+                    -- show selected world/area explicitly
+                    if ui and ui.StatusLabel then ui.StatusLabel.Text = ("World: %s | Area: %s | Farming: %s"):format(tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No")) end
 
-                    -- free stale assignments if breakables disappear
+                    -- free stale assignments
                     FreeStaleAssignments(coins)
 
-                    -- fill assignments (one pet per breakable) for selected area only
+                    -- assign one pet per breakable only in selected area
                     FillAssignments(coins)
 
-                    -- collect orbs
+                    -- claim orbs
                     pcall(function() ClaimOrbs({}) end)
 
-                    -- collect lootbags to player
+                    -- collect lootbags (teleport to player)
                     pcall(function()
                         local things = Workspace:FindFirstChild("__THINGS") or Workspace:FindFirstChild("__things")
                         if things and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
@@ -617,7 +617,7 @@ local ok, mainErr = pcall(function()
         end
     end)
 
-    print("[AutoFarm] Loaded - simple GUI ready. Pick Best Pets -> Start.")
+    print("[AutoFarm] Final UI + area-only autofarm loaded. Use Pick Best Pets -> Start. Minimize with the top-right — click the Hate icon to restore.")
 
 end)
 
