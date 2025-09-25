@@ -1,4 +1,4 @@
--- PSX AutoFarm (Final) - Draggable GUI, World/Area dropdowns, Minimize, Pick & Equip Best, Auto farm all breakables
+-- PSX AutoFarm (Revised) - Draggable GUI, World/Area dropdowns, Minimize, Pick & Equip Best, Auto farm all breakables
 -- Paste into a NEW LocalScript and run with your executor
 
 local ok, mainErr = pcall(function()
@@ -29,7 +29,7 @@ local ok, mainErr = pcall(function()
     assert(LocalPlayer, "LocalPlayer nil - run as LocalScript")
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-    -- ==== SAFE REMOTE CALLER (no top-level varargs) ====
+    -- ==== SAFE REMOTE CALLER ====
     local Network = ReplicatedStorage:FindFirstChild("Network")
     if not Network then
         warn("[AutoFarm] ReplicatedStorage.Network not found. Remotes may be missing.")
@@ -37,22 +37,14 @@ local ok, mainErr = pcall(function()
 
     local function CallRemote(name, argsTable)
         argsTable = argsTable or {}
-        if not Network then
-            return false, "Network missing"
-        end
+        if not Network then return false, "Network missing" end
         local r = Network:FindFirstChild(name)
-        if not r then
-            return false, ("Remote not found: %s"):format(tostring(name))
-        end
+        if not r then return false, ("Remote not found: %s"):format(tostring(name)) end
         if r.ClassName == "RemoteFunction" then
-            local ok, res = pcall(function()
-                return r:InvokeServer(table.unpack(argsTable))
-            end)
+            local ok, res = pcall(function() return r:InvokeServer(table.unpack(argsTable)) end)
             return ok, res
         elseif r.ClassName == "RemoteEvent" then
-            local ok, res = pcall(function()
-                r:FireServer(table.unpack(argsTable))
-            end)
+            local ok, res = pcall(function() r:FireServer(table.unpack(argsTable)) end)
             return ok, res
         else
             return false, ("Remote unexpected class: %s"):format(tostring(r.ClassName))
@@ -139,7 +131,6 @@ local ok, mainErr = pcall(function()
         local bestId, bestDist = nil, math.huge
         for id, data in pairs(coins) do
             if type(data) == "table" and not usedTargets[id] then
-                -- filter by selected world & area
                 if tostring(data.w) == tostring(world) and tostring(data.a) == tostring(area) then
                     local p = data.p
                     if p and typeof(p) == "Vector3" then
@@ -163,7 +154,6 @@ local ok, mainErr = pcall(function()
             if not petToTarget[uid] and (petCooldowns[uid] or 0) <= tick() then
                 local nearestId = getNearestBreakableForPositionFiltered(coins, hrp.Position, used, world, area)
                 if nearestId then
-                    -- schedule safe calls
                     safe_delay(0, function() JoinCoin(nearestId, {uid}) end)
                     safe_delay(JOIN_DELAY, function() ChangePetTarget(uid, "Coin", nearestId) end)
                     safe_delay(JOIN_DELAY + CHANGE_DELAY, function() FarmCoin(nearestId, uid) end)
@@ -250,7 +240,6 @@ local ok, mainErr = pcall(function()
             Menu = menu,
             Label = label,
             SetOptions = function(newOptions)
-                -- clear children
                 for _, c in ipairs(menu:GetChildren()) do if not (c:IsA("UIListLayout")) then c:Destroy() end end
                 for _, opt in ipairs(newOptions) do
                     local optBtn = Instance.new("TextButton", menu)
@@ -273,7 +262,7 @@ local ok, mainErr = pcall(function()
         }
     end
 
-    -- draggable implementation (robust)
+    -- draggable
     local function makeDraggable(frame)
         local dragging, dragInput, dragStart, startPos
         frame.InputBegan:Connect(function(input)
@@ -309,8 +298,8 @@ local ok, mainErr = pcall(function()
         screenGui.Parent = PlayerGui
 
         local frame = Instance.new("Frame", screenGui)
-        frame.Size = UDim2.new(0, 360, 0, 200)
-        frame.Position = UDim2.new(0.5, -180, 0.5, -100)
+        frame.Size = UDim2.new(0, 360, 0, 220)
+        frame.Position = UDim2.new(0.5, -180, 0.5, -110)
         frame.BackgroundColor3 = Color3.fromRGB(28,28,28)
         Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
 
@@ -325,7 +314,6 @@ local ok, mainErr = pcall(function()
         title.TextColor3 = Color3.new(1,1,1)
         title.Text = "PSX AutoFarm"
 
-        -- minimize button
         local minimizeBtn = Instance.new("TextButton", frame)
         minimizeBtn.Size = UDim2.new(0, 28, 0, 24)
         minimizeBtn.Position = UDim2.new(1, -36, 0, 8)
@@ -336,7 +324,6 @@ local ok, mainErr = pcall(function()
         minimizeBtn.TextColor3 = Color3.new(0,0,0)
         Instance.new("UICorner", minimizeBtn).CornerRadius = UDim.new(0,6)
 
-        -- small open button (hidden until minimized)
         local openBtn = Instance.new("TextButton", screenGui)
         openBtn.Size = UDim2.new(0, 40, 0, 28)
         openBtn.Position = UDim2.new(0, 10, 0, 10)
@@ -347,7 +334,7 @@ local ok, mainErr = pcall(function()
         Instance.new("UICorner", openBtn).CornerRadius = UDim.new(0,6)
         openBtn.ZIndex = 999
 
-        -- dropdowns
+        -- Dropdowns and buttons
         local worldDropdown = makeDropdown(frame, 12, 44, 160, "World", (function()
             local t = {}
             for k, _ in pairs(WorldsTable) do table.insert(t, k) end
@@ -355,10 +342,8 @@ local ok, mainErr = pcall(function()
             return t
         end)(), function(selected)
             SelectedWorld = selected
-            -- update area dropdown options
             local areas = WorldsTable[selected] or {}
             areaDropdown.SetOptions(areas)
-            -- default area
             if #areas > 0 then
                 SelectedArea = areas[1]
                 areaDropdown.Button.Text = areas[1]
@@ -366,32 +351,14 @@ local ok, mainErr = pcall(function()
                 SelectedArea = ""
                 areaDropdown.Button.Text = "None"
             end
+            petToTarget = {}
+            targetToPet = {}
+            petCooldowns = {}
         end)
-
-        local areaDropdown = makeDropdown(frame, 192, 44, 156, "Area", WorldsTable[SelectedWorld] or {}, function(selected)
-            SelectedArea = selected
-        end)
-
-        -- set initial dropdown selections
-        do
-            local worlds = {}
-            for k,_ in pairs(WorldsTable) do table.insert(worlds, k) end
-            table.sort(worlds)
-            if #worlds > 0 then
-                SelectedWorld = worlds[1]
-                worldDropdown.Button.Text = worlds[1]
-                local areas = WorldsTable[SelectedWorld] or {}
-                areaDropdown.SetOptions(areas)
-                if #areas > 0 then
-                    SelectedArea = areas[1]
-                    areaDropdown.Button.Text = areas[1]
-                end
-            end
-        end
 
         local pickBtn = Instance.new("TextButton", frame)
-        pickBtn.Size = UDim2.new(0, 168, 0, 36)
-        pickBtn.Position = UDim2.new(0, 12, 0, 112)
+        pickBtn.Size = UDim2.new(0, 168, 0, 92)
+        pickBtn.Position = UDim2.new(0, 12, 0, 92)
         pickBtn.Text = "Pick & Equip Best"
         pickBtn.Font = Enum.Font.SourceSansBold
         pickBtn.BackgroundColor3 = Color3.fromRGB(70,130,180)
@@ -399,17 +366,24 @@ local ok, mainErr = pcall(function()
         Instance.new("UICorner", pickBtn).CornerRadius = UDim.new(0,6)
 
         local startBtn = Instance.new("TextButton", frame)
-        startBtn.Size = UDim2.new(0, 168, 0, 36)
-        startBtn.Position = UDim2.new(0, 180, 0, 112)
+        startBtn.Size = UDim2.new(0, 168, 0, 92)
+        startBtn.Position = UDim2.new(0, 180, 0, 92)
         startBtn.Text = "Start"
         startBtn.Font = Enum.Font.SourceSansBold
         startBtn.BackgroundColor3 = Color3.fromRGB(34,139,34)
         startBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
 
+        local areaDropdown = makeDropdown(frame, 12, 140, 336, "Area", WorldsTable[SelectedWorld] or {}, function(selected)
+            SelectedArea = selected
+            petToTarget = {}
+            targetToPet = {}
+            petCooldowns = {}
+        end)
+
         local statusLabel = Instance.new("TextLabel", frame)
         statusLabel.Size = UDim2.new(1, -16, 0, 28)
-        statusLabel.Position = UDim2.new(0, 8, 0, 160)
+        statusLabel.Position = UDim2.new(0, 8, 0, 188)
         statusLabel.BackgroundTransparency = 1
         statusLabel.Font = Enum.Font.SourceSans
         statusLabel.TextSize = 14
@@ -451,7 +425,6 @@ local ok, mainErr = pcall(function()
                 startBtn.Text = "Stop"
                 startBtn.BackgroundColor3 = Color3.fromRGB(178,34,34)
                 statusLabel.Text = "Status: Farming - selecting targets..."
-                -- clear any old assignments
                 petToTarget = {}
                 targetToPet = {}
                 petCooldowns = {}
@@ -477,7 +450,6 @@ local ok, mainErr = pcall(function()
     task.spawn(function()
         while true do
             if Enabled then
-                -- make sure pets are equipped
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
                     for _, uid in ipairs(trackedPets) do
@@ -487,12 +459,10 @@ local ok, mainErr = pcall(function()
                     task.wait(EQUIP_WAIT)
                 end
 
-                -- fetch coin/breakables table
                 local coins = GetCoinsRaw()
                 if not coins then
                     task.wait(1)
                 else
-                    -- update GUI world/area label using first valid coin (as requested)
                     local firstW, firstA = nil, nil
                     for id, data in pairs(coins) do
                         if type(data) == "table" and data.w and data.a then
@@ -506,17 +476,9 @@ local ok, mainErr = pcall(function()
                         ui.Status.Text = "Status: Farming: Unknown area"
                     end
 
-                    -- free stale assignments if breakables removed
                     freeStaleAssignments(coins)
-
-                    -- assign pets to nearest breakables in selected world/area
                     assignAllTrackedToNearestFiltered(coins, SelectedWorld, SelectedArea)
-
-                    -- If after assignment there are still unassigned pets, try to assign them again (fast)
-                    -- This helps ensure all pets are used when many breakables exist
                     assignAllTrackedToNearestFiltered(coins, SelectedWorld, SelectedArea)
-
-                    -- collect orbs & bags
                     collectOrbsAndBags()
                 end
             end
@@ -526,7 +488,7 @@ local ok, mainErr = pcall(function()
 
     print("[AutoFarm] ✅ Loaded. Use the GUI: Pick & Equip Best -> Start.")
 
-end) -- end pcall
+end)
 
 if not ok then
     warn("[AutoFarm] Startup error:", mainErr)
