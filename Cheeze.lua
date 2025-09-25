@@ -1,5 +1,4 @@
--- ✅ Simple PSX AutoFarm (All Coins + World+Area GUI)
--- Paste into a NEW LocalScript and run with executor
+-- PSX AutoFarm (safe, no varargs usage) - paste into NEW LocalScript and run in Delta
 
 local ok, mainErr = pcall(function()
 
@@ -10,13 +9,6 @@ local ok, mainErr = pcall(function()
     local MAIN_LOOP_DELAY = 0.8
     local EQUIP_WAIT = 0.45
 
-    -- ==== SAFE DELAY WRAPPER ====
-    local function safe_delay(time, func)
-        if type(time) == "number" and type(func) == "function" then
-            task.delay(time, func)
-        end
-    end
-
     -- ==== SERVICES ====
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -25,53 +17,60 @@ local ok, mainErr = pcall(function()
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
     local Workspace = game:GetService("Workspace")
 
-    print("[AutoFarm] ✅ Script start - environment OK")
+    print("[AutoFarm] start - environment OK")
 
     local Network = ReplicatedStorage:FindFirstChild("Network")
     if not Network then
-        warn("[AutoFarm] ❌ ReplicatedStorage.Network not found.")
+        warn("[AutoFarm] ReplicatedStorage.Network not found. Remotes may be missing.")
     else
-        print("[AutoFarm] ✅ Found ReplicatedStorage.Network")
+        print("[AutoFarm] Found ReplicatedStorage.Network")
     end
 
-    -- ===== SAFE REMOTE CALLER =====
-    local function CallRemoteByName(name, ...)
-        if not Network then return false, "Network missing" end
-        local r = Network:FindFirstChild(name)
-        if not r then return false, "Remote not found: " .. tostring(name) end
-        if r.ClassName == "RemoteFunction" then
-            local ok, res = pcall(function() return r:InvokeServer(...) end)
-            return ok, res
-        elseif r.ClassName == "RemoteEvent" then
-            local ok, _ = pcall(function() r:FireServer(...) end)
-            return ok, nil
+    -- ==== Helper: call remote by name with explicit args table (no varargs usage at definition)
+    local function CallRemote(name, argsTable)
+        argsTable = argsTable or {}
+        if not Network then
+            return false, "Network missing"
         end
-        return false, "Invalid remote type"
+        local r = Network:FindFirstChild(name)
+        if not r then
+            return false, ("Remote not found: %s"):format(tostring(name))
+        end
+
+        if r.ClassName == "RemoteFunction" then
+            -- pass argsTable items as varargs *inside* the function (safe)
+            local ok, res = pcall(function()
+                return r:InvokeServer(table.unpack(argsTable))
+            end)
+            if ok then return true, res else return false, res end
+        elseif r.ClassName == "RemoteEvent" then
+            local ok, res = pcall(function()
+                r:FireServer(table.unpack(argsTable))
+            end)
+            if ok then return true, nil else return false, res end
+        else
+            return false, ("Remote unexpected class: %s"):format(tostring(r.ClassName))
+        end
     end
 
-    -- ==== REMOTE HELPERS ====
-    local function GetSave()
-        local ok, res = CallRemoteByName("Get Custom Save")
-        if ok then return res end
+    -- wrapper helpers (use args table)
+    local function GetSave() local ok,res = CallRemote("Get Custom Save", {}) if ok then return res end return nil end
+    local function GetCoinsRaw() local ok,res = CallRemote("Get Coins", {}) if ok then return res end local ok2,res2 = CallRemote("Coins: Get Test", {}) if ok2 then return res2 end return nil end
+    local function EquipPet(uid) return CallRemote("Equip Pet", {uid}) end
+    local function JoinCoin(id, pets) return CallRemote("Join Coin", {id, pets}) end
+    local function ChangePetTarget(uid, ttype, id) return CallRemote("Change Pet Target", {uid, ttype, id}) end
+    local function FarmCoin(id, uid) return CallRemote("Farm Coin", {id, uid}) end
+    local function ClaimOrbs(arg) return CallRemote("Claim Orbs", {arg or {}}) end
+
+    -- safe scheduler
+    local function safe_delay(t, f)
+        if type(t) == "number" and type(f) == "function" then task.delay(t, f) end
     end
 
-    local function GetCoinsRaw()
-        local ok, res = CallRemoteByName("Get Coins")
-        if ok then return res end
-        ok, res = CallRemoteByName("Coins: Get Test")
-        if ok then return res end
-    end
-
-    local function EquipPet(uid) return CallRemoteByName("Equip Pet", uid) end
-    local function JoinCoin(id, pets) return CallRemoteByName("Join Coin", id, pets) end
-    local function ChangePetTarget(uid, ttype, id) return CallRemoteByName("Change Pet Target", uid, ttype, id) end
-    local function FarmCoin(id, uid) return CallRemoteByName("Farm Coin", id, uid) end
-    local function ClaimOrbs(arg) return CallRemoteByName("Claim Orbs", arg) end
-
-    -- ==== UTILITIES ====
+    -- pet utilities
     local function safeNumber(x)
-        if type(x) == "number" then return x end
-        if type(x) == "string" then return tonumber(x) or 0 end
+        if type(x)=="number" then return x end
+        if type(x)=="string" then return tonumber(x) or 0 end
         return 0
     end
 
@@ -79,7 +78,7 @@ local ok, mainErr = pcall(function()
         if not save then return {} end
         local petsTbl = save.Pets or save.pets or {}
         local out = {}
-        for k, v in pairs(petsTbl) do
+        for k,v in pairs(petsTbl) do
             if type(v) == "table" then
                 v.uid = v.uid or k
                 table.insert(out, v)
@@ -90,14 +89,14 @@ local ok, mainErr = pcall(function()
 
     local function sortByPowerDesc(list)
         table.sort(list, function(a,b)
-            return safeNumber(a.s or a.power) > safeNumber(b.s or b.power)
+            return safeNumber(a.s or a.power or a.p or 0) > safeNumber(b.s or b.power or b.p or 0)
         end)
     end
 
     local function pickTopNFromSave(n)
         local save = GetSave()
         if not save then return {} end
-        local maxEquip = tonumber(save.MaxEquipped or save["P MaxEquipped"]) or 8
+        local maxEquip = tonumber(save.MaxEquipped or save["P MaxEquipped"] or save["PMaxEquipped"]) or 8
         if n then maxEquip = n end
         local all = buildPetListFromSave(save)
         sortByPowerDesc(all)
@@ -108,11 +107,11 @@ local ok, mainErr = pcall(function()
         return chosen
     end
 
-    -- ==== STATE ====
+    -- state
     local Enabled = false
-    local trackedPets = {}
+    local trackedPets = {} -- list of uids
 
-    -- ==== GUI ====
+    -- GUI (status includes world/area)
     local function CreateGUI()
         local gui = Instance.new("ScreenGui")
         gui.Name = "PSX_AutoFarm"
@@ -120,78 +119,90 @@ local ok, mainErr = pcall(function()
         gui.Parent = PlayerGui
 
         local frame = Instance.new("Frame", gui)
-        frame.Size = UDim2.new(0, 300, 0, 160)
-        frame.Position = UDim2.new(0.5, -150, 0.5, -80)
-        frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
-        Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+        frame.Size = UDim2.new(0, 320, 0, 170)
+        frame.Position = UDim2.new(0.5, -160, 0.5, -85)
+        frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+        Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
 
         local title = Instance.new("TextLabel", frame)
-        title.Size = UDim2.new(1, 0, 0, 28)
+        title.Size = UDim2.new(1, 0, 0, 26)
         title.Position = UDim2.new(0, 0, 0, 6)
-        title.Text = "⚙️ PSX AutoFarm"
-        title.TextColor3 = Color3.new(1, 1, 1)
-        title.Font = Enum.Font.SourceSansBold
         title.BackgroundTransparency = 1
-        title.TextSize = 18
+        title.Font = Enum.Font.SourceSansBold
+        title.TextSize = 16
+        title.TextColor3 = Color3.new(1,1,1)
+        title.Text = "PSX AutoFarm"
 
-        local pick = Instance.new("TextButton", frame)
-        pick.Size = UDim2.new(0.48, -8, 0, 36)
-        pick.Position = UDim2.new(0, 10, 0, 44)
-        pick.Text = "Pick Best Pets"
-        pick.BackgroundColor3 = Color3.fromRGB(70, 130, 180)
-        pick.TextColor3 = Color3.new(1, 1, 1)
-        pick.Font = Enum.Font.SourceSansBold
+        local pickBtn = Instance.new("TextButton", frame)
+        pickBtn.Size = UDim2.new(0.48, -8, 0, 36)
+        pickBtn.Position = UDim2.new(0, 10, 0, 40)
+        pickBtn.Text = "Pick Best Pets"
+        pickBtn.Font = Enum.Font.SourceSansBold
+        pickBtn.BackgroundColor3 = Color3.fromRGB(70,130,180)
+        pickBtn.TextColor3 = Color3.new(1,1,1)
 
-        local start = Instance.new("TextButton", frame)
-        start.Size = UDim2.new(0.48, -8, 0, 36)
-        start.Position = UDim2.new(0, 152, 0, 44)
-        start.Text = "Start"
-        start.BackgroundColor3 = Color3.fromRGB(34, 139, 34)
-        start.TextColor3 = Color3.new(1, 1, 1)
-        start.Font = Enum.Font.SourceSansBold
+        local startBtn = Instance.new("TextButton", frame)
+        startBtn.Size = UDim2.new(0.48, -8, 0, 36)
+        startBtn.Position = UDim2.new(0, 168, 0, 40)
+        startBtn.Text = "Start"
+        startBtn.Font = Enum.Font.SourceSansBold
+        startBtn.BackgroundColor3 = Color3.fromRGB(34,139,34)
+        startBtn.TextColor3 = Color3.new(1,1,1)
 
         local status = Instance.new("TextLabel", frame)
-        status.Size = UDim2.new(1, -20, 0, 40)
-        status.Position = UDim2.new(0, 10, 0, 100)
-        status.Text = "Status: Idle"
-        status.TextColor3 = Color3.new(1, 1, 1)
+        status.Size = UDim2.new(1, -20, 0, 52)
+        status.Position = UDim2.new(0, 10, 0, 86)
+        status.BackgroundTransparency = 1
+        status.TextColor3 = Color3.new(1,1,1)
+        status.TextWrapped = true
         status.Font = Enum.Font.SourceSans
         status.TextSize = 14
-        status.BackgroundTransparency = 1
+        status.Text = "Status: Idle"
 
-        pick.MouseButton1Click:Connect(function()
+        -- pick button behavior
+        pickBtn.MouseButton1Click:Connect(function()
             status.Text = "Status: Equipping best pets..."
-            trackedPets = pickTopNFromSave()
+            local chosen = pickTopNFromSave()
+            if #chosen == 0 then
+                status.Text = "Status: No pets found."
+                return
+            end
+            trackedPets = chosen
             for _, uid in ipairs(trackedPets) do
-                pcall(function() EquipPet(uid) end)
+                local ok, res = EquipPet(uid)
+                if not ok then warn("[AutoFarm] EquipPet failed for", uid, res) end
                 task.wait(0.06)
             end
             task.wait(EQUIP_WAIT)
-            status.Text = "Status: Equipped " .. #trackedPets .. " pets"
+            status.Text = ("Status: Equipped %d pets"):format(#trackedPets)
         end)
 
-        start.MouseButton1Click:Connect(function()
+        -- start/stop
+        startBtn.MouseButton1Click:Connect(function()
             Enabled = not Enabled
             if Enabled then
-                start.Text = "Stop"
-                start.BackgroundColor3 = Color3.fromRGB(178, 34, 34)
-                status.Text = "Status: Farming all coins..."
+                startBtn.Text = "Stop"
+                startBtn.BackgroundColor3 = Color3.fromRGB(178,34,34)
+                status.Text = "Status: Farming (detecting world/area)..."
             else
-                start.Text = "Start"
-                start.BackgroundColor3 = Color3.fromRGB(34, 139, 34)
+                startBtn.Text = "Start"
+                startBtn.BackgroundColor3 = Color3.fromRGB(34,139,34)
                 status.Text = "Status: Stopped"
             end
         end)
 
-        return status
+        return {
+            Status = status
+        }
     end
 
-    local statusLabel = CreateGUI()
+    local ui = CreateGUI()
 
-    -- ==== MAIN FARM LOOP ====
+    -- main loop: target ALL coins
     task.spawn(function()
         while true do
             if Enabled then
+                -- ensure pets equipped
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
                     for _, uid in ipairs(trackedPets) do
@@ -202,18 +213,38 @@ local ok, mainErr = pcall(function()
                 end
 
                 local coins = GetCoinsRaw()
-                if coins then
+                if not coins then
+                    task.wait(1)
+                else
+                    -- For GUI world/area display: capture first valid coin's w/a
+                    local firstW, firstA = nil, nil
                     for id, data in pairs(coins) do
-                        if type(data) == "table" and data.w and data.a then
-                            statusLabel.Text = string.format("Farming: %s - %s", tostring(data.w), tostring(data.a))
-                        end
-                        for _, uid in ipairs(trackedPets) do
-                            safe_delay(0, function() JoinCoin(id, {uid}) end)
-                            safe_delay(JOIN_DELAY, function() ChangePetTarget(uid, "Coin", id) end)
-                            safe_delay(JOIN_DELAY + CHANGE_DELAY, function() FarmCoin(id, uid) end)
-                            task.wait(SAFE_DELAY_BETWEEN_ASSIGN)
+                        if type(data)=="table" and data.w and data.a then
+                            firstW, firstA = tostring(data.w), tostring(data.a)
+                            break
                         end
                     end
+                    if firstW and firstA then
+                        ui.Status.Text = ("Farming: %s - %s"):format(firstW, firstA)
+                    else
+                        ui.Status.Text = "Farming: Unknown area"
+                    end
+
+                    -- iterate all coins and send each equipped pet
+                    for id, data in pairs(coins) do
+                        if type(data) == "table" then
+                            -- send each equipped pet to this coin
+                            for _, uid in ipairs(trackedPets) do
+                                -- use safe delayed calls (no vararg at top-level)
+                                safe_delay(0, function() JoinCoin(id, {uid}) end)
+                                safe_delay(JOIN_DELAY, function() ChangePetTarget(uid, "Coin", id) end)
+                                safe_delay(JOIN_DELAY + CHANGE_DELAY, function() FarmCoin(id, uid) end)
+                                task.wait(SAFE_DELAY_BETWEEN_ASSIGN)
+                            end
+                        end
+                    end
+
+                    -- claim orbs / loot
                     pcall(function() ClaimOrbs({}) end)
                 end
             end
@@ -221,12 +252,12 @@ local ok, mainErr = pcall(function()
         end
     end)
 
-    print("[AutoFarm] ✅ Loaded. Click 'Pick Best Pets' then 'Start'.")
+    print("[AutoFarm] Loaded - GUI ready. Pick Best Pets then Start.")
 
-end)
+end) -- end pcall
 
 if not ok then
-    warn("[AutoFarm] ❌ Failed to run:", mainErr)
+    warn("[AutoFarm] Startup error:", mainErr)
 else
-    print("[AutoFarm] ✅ Script executed successfully!")
+    print("[AutoFarm] Script executed successfully!")
 end
