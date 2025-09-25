@@ -1,9 +1,9 @@
--- PSX AutoFarm — Safe + Area-only + One pet per breakable + Wally v3 UI + Minimize (Hate)
+-- PSX AutoFarm — Simple GUI + Area-only + One pet per breakable + All types
 -- Paste into a NEW LocalScript and run
 
 local ok, mainErr = pcall(function()
 
-    -- CONFIG
+    -- ==== CONFIG ====
     local SAFE_DELAY_BETWEEN_ASSIGN = 0.18
     local JOIN_DELAY = 0.06
     local CHANGE_DELAY = 0.04
@@ -11,7 +11,7 @@ local ok, mainErr = pcall(function()
     local EQUIP_WAIT = 0.45
     local RETARGET_DELAY = 0.3
 
-    -- Worlds/areas table (your list)
+    -- ==== WORLDS TABLE ====
     local WorldsTable = {
         ["Spawn"] = {"Shop","Town","Forest","Beach","Mine","Winter","Glacier","Desert","Volcano","Cave","Tech Entry","VIP"},
         ["Fantasy"] = {"Fantasy Shop","Enchanted Forest","Portals","Ancient Island","Samurai Island","Candy Island","Haunted Island","Hell Island","Heaven Island","Heaven's Gate"},
@@ -22,7 +22,7 @@ local ok, mainErr = pcall(function()
         ["Cat"] = {"Cat Paradise","Cat Backyard","Cat Taiga","Cat Throne Room"}
     }
 
-    -- SERVICES
+    -- ==== SERVICES ====
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Workspace = game:GetService("Workspace")
@@ -30,12 +30,12 @@ local ok, mainErr = pcall(function()
     assert(LocalPlayer, "LocalPlayer nil - run as LocalScript")
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
-    print("[AutoFarm] start - environment OK")
-
     local Network = ReplicatedStorage:FindFirstChild("Network")
-    if not Network then warn("[AutoFarm] ReplicatedStorage.Network not found. Remotes may be missing.") end
+    if not Network then
+        warn("[AutoFarm] ReplicatedStorage.Network not found. Remotes may be missing.")
+    end
 
-    -- SAFE Remote caller (no vararg at top-level)
+    -- ==== SAFE REMOTE CALLER ====
     local function CallRemote(name, argsTable)
         argsTable = argsTable or {}
         if not Network then return false, "Network missing" end
@@ -52,7 +52,7 @@ local ok, mainErr = pcall(function()
         end
     end
 
-    -- Remote wrappers
+    -- wrappers
     local function GetSave() local ok,res = CallRemote("Get Custom Save", {}) if ok then return res end return nil end
     local function GetCoinsRaw() local ok,res = CallRemote("Get Coins", {}) if ok then return res end local ok2,res2 = CallRemote("Coins: Get Test", {}) if ok2 then return res2 end return nil end
     local function EquipPet(uid) return CallRemote("Equip Pet", {uid}) end
@@ -60,14 +60,16 @@ local ok, mainErr = pcall(function()
     local function ChangePetTarget(uid, ttype, id) return CallRemote("Change Pet Target", {uid, ttype, id}) end
     local function FarmCoin(id, uid) return CallRemote("Farm Coin", {id, uid}) end
     local function ClaimOrbs(arg) return CallRemote("Claim Orbs", {arg or {}}) end
+
     local function EquipBestPetsRemote()
-        local r = Network and Network:FindFirstChild("Equip Best Pets")
+        if not Network then return false end
+        local r = Network:FindFirstChild("Equip Best Pets")
         if not r then return false end
         local ok, _ = pcall(function() r:InvokeServer() end)
         return ok
     end
 
-    -- UTILITIES
+    -- ==== UTILITIES ====
     local function safe_delay(t, f) if type(t)=="number" and type(f)=="function" then task.delay(t, f) end end
     local function safeNumber(x) if type(x)=="number" then return x elseif type(x)=="string" then return tonumber(x) or 0 end return 0 end
 
@@ -104,7 +106,7 @@ local ok, mainErr = pcall(function()
         return chosen
     end
 
-    -- STATE
+    -- ==== STATE ====
     local SelectedWorld = "Spawn"
     local SelectedArea = "Town"
     local Enabled = false
@@ -113,7 +115,7 @@ local ok, mainErr = pcall(function()
     local targetToPet = {}      -- targetId -> petUID
     local petCooldowns = {}     -- petUID -> tick when allowed to reassign
 
-    -- Helper: get equipped UIDs (prefers save)
+    -- Helper: choose equipped pet UIDs (prefer save flags)
     local function GetEquippedPetUIDs()
         local uids = {}
         local save = GetSave()
@@ -128,16 +130,16 @@ local ok, mainErr = pcall(function()
             end
             if #uids > 0 then return uids end
         end
-        -- fallback: try pickTopNFromSave (will return all if no equipped flagged)
+        -- fallback: return pickTopNFromSave (it will return top equipped or best)
         local top = pickTopNFromSave()
         if #top > 0 then return top end
         return {}
     end
 
-    -- Core assignment helpers (one pet per breakable)
+    -- === ASSIGNMENT HELPERS (one pet per breakable) ===
     local function AssignPetToBreakable(petUID, breakId)
         if not petUID or not breakId then return false end
-        -- Call JoinCoin, ChangePetTarget, FarmCoin safely via CallRemote helper
+        -- Use safe delayed remote calls
         safe_delay(0, function() JoinCoin(breakId, {petUID}) end)
         safe_delay(JOIN_DELAY, function() ChangePetTarget(petUID, "Coin", breakId) end)
         safe_delay(JOIN_DELAY + CHANGE_DELAY, function() FarmCoin(breakId, petUID) end)
@@ -160,7 +162,7 @@ local ok, mainErr = pcall(function()
 
     local function FreeStaleAssignments(coins)
         local present = {}
-        if coins then for id, _ in pairs(coins) do present[id] = true end end
+        if coins then for id,_ in pairs(coins) do present[id] = true end end
         for petUID, tid in pairs(petToTarget) do
             if not present[tid] then
                 ClearAssignmentForPet(petUID)
@@ -186,11 +188,9 @@ local ok, mainErr = pcall(function()
     end
 
     local function FillAssignments(coins)
-        -- get currently equipped pet UIDs
         local petUIDs = GetEquippedPetUIDs()
         if #petUIDs == 0 then return end
 
-        -- build list of free pets (not assigned & off cooldown)
         local freePets = {}
         for _, uid in ipairs(petUIDs) do
             if not petToTarget[uid] then
@@ -214,63 +214,171 @@ local ok, mainErr = pcall(function()
         end
     end
 
-    -- === UI using Wally v3 library ===
-    -- We'll create functions to (re)build the UI and to destroy it (minimize).
-    local libraryLoadString = "https://raw.githubusercontent.com/bloodball/-back-ups-for-libs/main/wall%20v3"
-    local wallyLibrary = nil
-    local currentWindowFolder = nil
-    local currentGuiState = { created = false }
+    -- ==== GUI HELPERS ====
+    local function makeDropdown(parent, posX, posY, width, labelText, options, onSelect)
+        local label = Instance.new("TextLabel", parent)
+        label.Size = UDim2.new(0, width, 0, 18)
+        label.Position = UDim2.new(0, posX, 0, posY)
+        label.BackgroundTransparency = 1
+        label.Text = labelText
+        label.TextColor3 = Color3.new(1,1,1)
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 14
 
-    local function CreateWallyUI()
-        -- load library
-        local success, libOrErr = pcall(function()
-            return loadstring(game:HttpGet(libraryLoadString))()
-        end)
-        if not success or not libOrErr then
-            warn("[AutoFarm] Failed to load Wally UI library:", libOrErr)
-            return false
-        end
-        wallyLibrary = libOrErr
+        local btn = Instance.new("TextButton", parent)
+        btn.Size = UDim2.new(0, width, 0, 26)
+        btn.Position = UDim2.new(0, posX, 0, posY + 18)
+        btn.Text = options[1] or "None"
+        btn.Font = Enum.Font.SourceSans
+        btn.TextSize = 14
+        btn.TextColor3 = Color3.new(1,1,1)
+        btn.BackgroundColor3 = Color3.fromRGB(60,60,60)
+        btn.AutoButtonColor = true
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
 
-        -- create window + folder
-        local w = wallyLibrary:CreateWindow("PSX AutoFarm")
-        local tab = w:CreateFolder("Main")
+        local menu = Instance.new("Frame", parent)
+        menu.Size = UDim2.new(0, width, 0, math.min(#options*24, 200))
+        menu.Position = UDim2.new(0, posX, 0, posY + 46)
+        menu.Visible = false
+        menu.BackgroundColor3 = Color3.fromRGB(40,40,40)
+        Instance.new("UICorner", menu).CornerRadius = UDim.new(0,6)
+        local layout = Instance.new("UIListLayout", menu)
+        layout.Padding = UDim.new(0,4)
 
-        -- world dropdown list (sorted)
-        local worlds = {}
-        for k,_ in pairs(WorldsTable) do table.insert(worlds, k) end
-        table.sort(worlds)
-
-        local areas_for_selected = WorldsTable[SelectedWorld] or {}
-
-        -- NOTE: Wally's dropdown lacks a documented runtime 'SetOptions' method in examples,
-        -- therefore when world changes we will rebuild the UI by destroying and recreating.
-        tab:Dropdown("World", worlds, true, function(choice)
-            SelectedWorld = choice
-            -- pick first area for that world
-            local a = WorldsTable[SelectedWorld] or {}
-            SelectedArea = a[1] or ""
-            -- rebuild UI so Area dropdown updates (destroy & recreate)
-            if currentGuiState.created then
-                pcall(function() tab:DestroyGui() end) -- try to clean
-                -- tiny delay to allow destruction
-                task.wait(0.05)
-                currentGuiState.created = false
-                -- recreate
-                CreateWallyUI()
+        local function populate(opts)
+            -- clear old option buttons
+            for _, c in ipairs(menu:GetChildren()) do
+                if not c:IsA("UIListLayout") then c:Destroy() end
             end
+            for _, opt in ipairs(opts) do
+                local optBtn = Instance.new("TextButton", menu)
+                optBtn.Size = UDim2.new(1, -8, 0, 20)
+                optBtn.Position = UDim2.new(0,4,0,0)
+                optBtn.Text = opt
+                optBtn.BackgroundTransparency = 1
+                optBtn.Font = Enum.Font.SourceSans
+                optBtn.TextColor3 = Color3.new(1,1,1)
+                optBtn.TextSize = 14
+                optBtn.AutoButtonColor = true
+                optBtn.MouseButton1Click:Connect(function()
+                    btn.Text = opt
+                    menu.Visible = false
+                    onSelect(opt)
+                end)
+            end
+            menu.Size = UDim2.new(0, width, 0, math.min(#opts*24, 200))
+        end
+
+        -- initial populate
+        populate(options)
+
+        btn.MouseButton1Click:Connect(function()
+            menu.Visible = not menu.Visible
         end)
 
-        -- area dropdown (populate from SelectedWorld)
-        local areaOpts = WorldsTable[SelectedWorld] or {}
-        tab:Dropdown("Area", areaOpts, true, function(choice)
-            SelectedArea = choice
+        return {
+            Button = btn,
+            Menu = menu,
+            Label = label,
+            SetOptions = function(newOptions)
+                populate(newOptions)
+            end
+        }
+    end
+
+    -- ==== GUI ====
+    local function CreateGUI()
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "PSX_AutoFarm_GUI_Simple"
+        screenGui.ResetOnSpawn = false
+        screenGui.Parent = PlayerGui
+
+        local frame = Instance.new("Frame", screenGui)
+        frame.Size = UDim2.new(0, 320, 0, 220)
+        frame.Position = UDim2.new(0.5, -160, 0.5, -110)
+        frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+        Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
+
+        local title = Instance.new("TextLabel", frame)
+        title.Size = UDim2.new(1, 0, 0, 26)
+        title.Position = UDim2.new(0, 0, 0, 6)
+        title.BackgroundTransparency = 1
+        title.Font = Enum.Font.SourceSansBold
+        title.TextSize = 16
+        title.TextColor3 = Color3.new(1,1,1)
+        title.Text = "PSX AutoFarm"
+
+        -- Buttons at top
+        local pickBtn = Instance.new("TextButton", frame)
+        pickBtn.Size = UDim2.new(0.48, -8, 0, 36)
+        pickBtn.Position = UDim2.new(0, 10, 0, 40)
+        pickBtn.Text = "Pick Best Pets"
+        pickBtn.Font = Enum.Font.SourceSansBold
+        pickBtn.BackgroundColor3 = Color3.fromRGB(70,130,180)
+        pickBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", pickBtn).CornerRadius = UDim.new(0,6)
+
+        local startBtn = Instance.new("TextButton", frame)
+        startBtn.Size = UDim2.new(0.48, -8, 0, 36)
+        startBtn.Position = UDim2.new(0, 168, 0, 40)
+        startBtn.Text = "Start"
+        startBtn.Font = Enum.Font.SourceSansBold
+        startBtn.BackgroundColor3 = Color3.fromRGB(34,139,34)
+        startBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
+
+        -- Dropdowns 5px below buttons:
+        -- Buttons Y = 40, height = 36 => bottom = 76. Next start posY = 76 + 5 = 81
+        local worldDropdown = makeDropdown(frame, 10, 81, 140, "World", (function()
+            local t = {}
+            for k,_ in pairs(WorldsTable) do table.insert(t, k) end
+            table.sort(t)
+            return t
+        end)(), function(selected)
+            SelectedWorld = selected
+            -- update area options
+            local areas = WorldsTable[SelectedWorld] or {}
+            areaDropdown.SetOptions(areas)
+            if #areas > 0 then
+                SelectedArea = areas[1]
+                areaDropdown.Button.Text = areas[1]
+            else
+                SelectedArea = ""
+                areaDropdown.Button.Text = "None"
+            end
+            -- clear assignments so pets retarget into new area
+            petToTarget = {}
+            targetToPet = {}
+            petCooldowns = {}
         end)
 
-        tab:Button("Pick Best Pets", function()
+        -- area dropdown below world dropdown:
+        -- world uses posY 81 and consumes posY..posY+46, so next posY = 81 + 46 + 5 = 132
+        local areaDropdown = makeDropdown(frame, 168, 81, 140, "Area", WorldsTable[SelectedWorld] or {}, function(selected)
+            SelectedArea = selected
+            -- clear assignments when area changes
+            petToTarget = {}
+            targetToPet = {}
+            petCooldowns = {}
+        end)
+
+        -- Status label at bottom
+        local status = Instance.new("TextLabel", frame)
+        status.Size = UDim2.new(1, -20, 0, 48)
+        status.Position = UDim2.new(0, 10, 0, 168)
+        status.BackgroundTransparency = 1
+        status.TextColor3 = Color3.new(1,1,1)
+        status.TextWrapped = true
+        status.Font = Enum.Font.SourceSans
+        status.TextSize = 14
+        status.Text = "Status: Idle"
+
+        -- Button behaviors
+        pickBtn.MouseButton1Click:Connect(function()
+            status.Text = "Status: Equipping best pets..."
             local chosen = pickTopNFromSave()
             if #chosen == 0 then
-                print("[AutoFarm] No pets found to equip.")
+                status.Text = "Status: No pets found."
                 return
             end
             trackedPets = chosen
@@ -280,98 +388,38 @@ local ok, mainErr = pcall(function()
                 task.wait(0.06)
             end
             task.wait(EQUIP_WAIT)
-            print(("[AutoFarm] Equipped %d pets"):format(#trackedPets))
+            status.Text = ("Status: Equipped %d pets"):format(#trackedPets)
         end)
 
-        tab:Toggle("AutoFarm (Start/Stop)", function(state)
-            Enabled = state
-            print("[AutoFarm] Enabled set to", tostring(Enabled))
-        end)
-
-        tab:Button("Equip Best (Remote)", function()
-            local ok = EquipBestPetsRemote()
-            if ok then
-                print("[AutoFarm] Equip Best remote called.")
-                task.wait(0.65)
-                trackedPets = GetEquippedPetUIDs()
+        startBtn.MouseButton1Click:Connect(function()
+            Enabled = not Enabled
+            if Enabled then
+                startBtn.Text = "Stop"
+                startBtn.BackgroundColor3 = Color3.fromRGB(178,34,34)
+                status.Text = ("Status: Farming (%s - %s)"):format(tostring(SelectedWorld), tostring(SelectedArea))
             else
-                warn("[AutoFarm] Equip Best remote missing/failed.")
+                startBtn.Text = "Start"
+                startBtn.BackgroundColor3 = Color3.fromRGB(34,139,34)
+                status.Text = "Status: Stopped"
             end
         end)
 
-        tab:Button("Destroy UI (minimize)", function()
-            -- destroy Wally UI and show icon (minimize)
-            pcall(function() tab:DestroyGui() end)
-            currentGuiState.created = false
-            -- icon will be created by CreateMinimizeIcon() below if needed
-        end)
-
-        -- small status label
-        tab:Label(("World: %s | Area: %s | Farming: %s"):format(tostring(SelectedWorld), tostring(SelectedArea), Enabled and "Yes" or "No"), {
-            TextSize = 14;
-            TextColor = Color3.fromRGB(255,255,255);
-            BgColor = Color3.fromRGB(50,50,50);
-        })
-
-        currentGuiState.created = true
-        return true
+        return {
+            Gui = screenGui,
+            Frame = frame,
+            Status = status,
+            WorldDropdown = worldDropdown,
+            AreaDropdown = areaDropdown
+        }
     end
 
-    -- Minimize icon (recreates UI on click)
-    local minimizeIcon = nil
-    local function CreateMinimizeIcon()
-        if minimizeIcon and minimizeIcon.Parent then return end
-        local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "PSX_AutoFarm_MinIcon_GUI"
-        screenGui.Parent = PlayerGui
+    local ui = CreateGUI()
 
-        local icon = Instance.new("TextButton", screenGui)
-        icon.Name = "PSX_AutoFarm_MinIcon"
-        icon.Size = UDim2.new(0,90,0,36)
-        icon.Position = UDim2.new(0, 10, 0, 10)
-        icon.AnchorPoint = Vector2.new(0,0)
-        icon.Text = "Hate"
-        icon.Font = Enum.Font.SourceSansBold
-        icon.TextSize = 16
-        icon.TextColor3 = Color3.new(1,1,1)
-        icon.BackgroundColor3 = Color3.fromRGB(40,40,40)
-        Instance.new("UICorner", icon).CornerRadius = UDim.new(0,6)
-        icon.Active = true
-        icon.Draggable = true
-
-        icon.MouseButton1Click:Connect(function()
-            -- recreate Wally UI
-            -- remove icon
-            pcall(function() screenGui:Destroy() end)
-            minimizeIcon = nil
-            CreateWallyUI()
-        end)
-
-        minimizeIcon = screenGui
-    end
-
-    -- Initial UI creation
-    CreateWallyUI()
-    -- ensure minimize icon exists but hidden (we only show icon if UI destroyed via DestroyGui)
-    -- We'll leave icon creation for when the user calls "Destroy UI (minimize)" or when UI auto-recreates.
-
-    -- If user destroyed the Wally UI directly (via destroy button), create the icon to allow restore
-    -- To keep things simple: we will monitor currentGuiState.created every 0.5s, and if not created and icon missing, create icon.
-    task.spawn(function()
-        while true do
-            if not currentGuiState.created and not minimizeIcon then
-                -- create icon so user can restore UI
-                CreateMinimizeIcon()
-            end
-            task.wait(0.6)
-        end
-    end)
-
-    -- MAIN LOOP: area-only + one pet per breakable
+    -- ==== MAIN LOOP ====
     task.spawn(function()
         while true do
             if Enabled then
-                -- ensure trackedPets are equipped
+                -- ensure pets equipped (if none)
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
                     for _, uid in ipairs(trackedPets) do
@@ -383,19 +431,23 @@ local ok, mainErr = pcall(function()
 
                 local coins = GetCoinsRaw()
                 if not coins then
+                    ui.Status.Text = "Status: Waiting for coins..."
                     task.wait(1)
                 else
-                    -- update GUI status label in Wally if possible by recreating label next cycle (we keep internal state)
+                    -- update status label to show selected area (explicit)
+                    ui.Status.Text = ("Status: Farming (%s - %s)"):format(tostring(SelectedWorld), tostring(SelectedArea))
+
                     -- free stale assignments
                     FreeStaleAssignments(coins)
 
-                    -- fill assignments (one pet per breakable) but only within selected area
+                    -- fill assignments (one pet per breakable) for selected area only
                     FillAssignments(coins)
 
-                    -- collect orbs & lootbags safely
+                    -- collect orbs
                     pcall(function() ClaimOrbs({}) end)
-                    -- try collect lootbags
-                    do
+
+                    -- collect lootbags to player
+                    pcall(function()
                         local things = Workspace:FindFirstChild("__THINGS") or Workspace:FindFirstChild("__things")
                         if things then
                             local bags = things:FindFirstChild("Lootbags")
@@ -407,16 +459,16 @@ local ok, mainErr = pcall(function()
                                 end
                             end
                         end
-                    end
+                    end)
                 end
             end
             task.wait(MAIN_LOOP_DELAY)
         end
     end)
 
-    print("[AutoFarm] Safe + Area-only AutoFarm loaded. Use the Wally UI: Pick Best, set World/Area, toggle AutoFarm. Minimize via 'Destroy UI (minimize)'. Click the 'Hate' icon to restore the UI.")
+    print("[AutoFarm] Loaded - simple GUI ready. Pick Best Pets -> Start.")
 
-end) -- pcall
+end)
 
 if not ok then
     warn("[AutoFarm] Startup error:", mainErr)
