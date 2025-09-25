@@ -1,0 +1,495 @@
+-- PSX AutoFarm Final (GUI) - Scan once on Start, pick top N pets, one pet per breakable (Safe)
+-- Paste into a new LocalScript & run
+
+-- ===== CONFIG =====
+local SAFE_MODE_DELAY = 0.18
+local JOIN_DELAY = 0.06
+local CHANGE_DELAY = 0.04
+local AUTO_LOOP_DELAY = 0.9
+local RETARGET_DELAY = 0.35
+local EQUIP_WAIT = 0.45
+
+-- Worlds/areas (adjust names if needed)
+local WorldsTable = {
+    ["Spawn"] = {"Shop","Town","Forest","Beach","Mine","Winter","Glacier","Desert","Volcano","Cave","Tech Entry","VIP"},
+    ["Fantasy"] = {"Fantasy Shop","Enchanted Forest","Portals","Ancient Island","Samurai Island","Candy Island","Haunted Island","Hell Island","Heaven Island","Heaven's Gate"},
+    ["Tech"] = {"Tech Shop","Tech City","Dark Tech","Steampunk","Steampunk Chest Area","Alien Lab","Alien Forest","Giant Alien Chest","Glitch","Hacker Portal"},
+    ["Void"] = {"The Void"},
+    ["Axolotl Ocean"] = {"Axolotl Ocean","Axolotl Deep Ocean","Axolotl Cave"},
+    ["Pixel"] = {"Pixel Forest","Pixel Kyoto","Pixel Alps","Pixel Vault"},
+    ["Cat"] = {"Cat Paradise","Cat Backyard","Cat Taiga","Cat Throne Room"}
+}
+
+-- ===== SERVICES =====
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local workspace = workspace
+
+local Network = ReplicatedStorage:FindFirstChild("Network")
+if not Network then
+    warn("[AutoFarm] ReplicatedStorage.Network not found. Remotes may be missing.")
+end
+
+-- Safe remote caller (handles RemoteFunction and RemoteEvent)
+local function CallRemoteByName(name, ...)
+    if not Network then return false, ("Network missing: %s"):format(tostring(name)) end
+    local r = Network:FindFirstChild(name)
+    if not r then return false, ("Remote not found: %s"):format(tostring(name)) end
+    local class = r.ClassName
+    if class == "RemoteFunction" then
+        local ok, res = pcall(function() return r:InvokeServer(...) end)
+        if ok then return true, res end
+        return false, res
+    elseif class == "RemoteEvent" then
+        local ok, _ = pcall(function() r:FireServer(...) end)
+        if ok then return true, nil end
+        return false, "FireServer failed"
+    else
+        return false, ("Unexpected remote class: %s"):format(tostring(class))
+    end
+end
+
+-- shorthand wrappers
+local function GetSave()
+    local ok, res = CallRemoteByName("Get Custom Save")
+    if ok then return res end
+    return nil
+end
+
+local function GetCoins()
+    local ok, res = CallRemoteByName("Get Coins")
+    if ok then return res end
+    -- fallback
+    ok, res = CallRemoteByName("Coins: Get Test")
+    if ok then return res end
+    return nil
+end
+
+local function EquipPet(uid)
+    return CallRemoteByName("Equip Pet", uid)
+end
+
+local function JoinCoin(id, pets)
+    return CallRemoteByName("Join Coin", id, pets)
+end
+
+local function ChangePetTarget(uid, ttype, id)
+    return CallRemoteByName("Change Pet Target", uid, ttype, id)
+end
+
+local function FarmCoin(id, uid)
+    return CallRemoteByName("Farm Coin", id, uid)
+end
+
+local function ClaimOrbs(arg)
+    return CallRemoteByName("Claim Orbs", arg)
+end
+
+-- ===== STATE =====
+local Enabled = false
+local SelectedWorld = "Spawn"
+local SelectedArea = "Town"
+
+local trackedPets = {}       -- UIDs we picked & equipped (fixed on Start)
+local petToTarget = {}      -- uid -> targetId
+local targetToPet = {}      -- targetId -> uid
+local petCooldowns = {}     -- uid -> timestamp
+
+-- ===== UTILITIES =====
+local function SafeToNumber(x)
+    if type(x) == "number" then return x end
+    if type(x) == "string" then return tonumber(x) or 0 end
+    return 0
+end
+
+local function GetMaxEquipFromSave(save)
+    save = save or GetSave()
+    if not save then return 8 end
+    local keys = {"MaxEquipped","P MaxEquipped","PMaxEquipped","P Max Equipped"}
+    for _,k in ipairs(keys) do
+        if save[k] and type(save[k]) == "number" then return tonumber(save[k]) end
+    end
+    return 8
+end
+
+local function GetAllPetsAsList(save)
+    save = save or GetSave()
+    if not save then return {} end
+    local pets = save.Pets or save.pets or {}
+    local out = {}
+    for k, v in pairs(pets) do
+        if type(v) == "table" then
+            v.uid = v.uid or k
+            table.insert(out, v)
+        end
+    end
+    return out
+end
+
+local function SortPetsByPowerDesc(list)
+    table.sort(list, function(a,b)
+        local pa = SafeToNumber(a.s or a.power or a.p or a.strength)
+        local pb = SafeToNumber(b.s or b.power or b.p or b.strength)
+        return pa > pb
+    end)
+end
+
+local function PickTopPetsFromSaveOnce()
+    local save = GetSave()
+    if not save then
+        warn("[AutoFarm] Get Custom Save failed; cannot pick pets.")
+        return {}
+    end
+    local maxEquip = GetMaxEquipFromSave(save) or 8
+    local all = GetAllPetsAsList(save)
+    if #all == 0 then
+        warn("[AutoFarm] No pets found in save.")
+        return {}
+    end
+    SortPetsByPowerDesc(all)
+    local chosen = {}
+    for i = 1, math.min(maxEquip, #all) do
+        table.insert(chosen, all[i].uid)
+    end
+    return chosen
+end
+
+local function EquipChosenPets(uids)
+    if not uids or #uids == 0 then return end
+    for _, uid in ipairs(uids) do
+        local ok, err = EquipPet(uid)
+        if not ok then
+            warn("[AutoFarm] Equip Pet failed for", uid, err)
+        end
+        task.wait(0.06)
+    end
+    task.wait(EQUIP_WAIT)
+end
+
+-- ===== COIN / ASSIGNMENT HELPERS =====
+local function NormalizeCoinsTable(raw)
+    if not raw then return nil end
+    if type(raw) ~= "table" then return nil end
+    if type(raw[1]) == "table" then return raw[1] end
+    return raw
+end
+
+local function GetAvailableBreakables(coinsTable)
+    local available = {}
+    if not coinsTable then return available end
+    for id, data in pairs(coinsTable) do
+        if type(data) == "table" then
+            local w = data.w or data.world
+            local a = data.a or data.area or data.n
+            if tostring(w) == tostring(SelectedWorld) and tostring(a):lower():find(tostring(SelectedArea):lower()) then
+                if not targetToPet[id] then
+                    table.insert(available, {id = id, name = data.n or data.name})
+                end
+            end
+        end
+    end
+    return available
+end
+
+local function AssignPetToBreakable(petUID, breakId)
+    if not petUID or not breakId then return false end
+    pcall(function() JoinCoin(breakId, {petUID}) end)
+    task.wait(JOIN_DELAY)
+    pcall(function() ChangePetTarget(petUID, "Coin", breakId) end)
+    task.wait(CHANGE_DELAY)
+    pcall(function() FarmCoin(breakId, petUID) end)
+    petToTarget[petUID] = breakId
+    targetToPet[breakId] = petUID
+    petCooldowns[petUID] = tick()
+    return true
+end
+
+local function ClearAssignmentForPet(uid)
+    if not uid then return end
+    local t = petToTarget[uid]
+    if t then
+        petToTarget[uid] = nil
+        targetToPet[t] = nil
+    end
+    petCooldowns[uid] = tick() + RETARGET_DELAY
+end
+
+local function CheckAssignmentsAndFree(coins)
+    local present = {}
+    if coins then for id, _ in pairs(coins) do present[id] = true end end
+    for petUID, tid in pairs(petToTarget) do
+        if not present[tid] then
+            ClearAssignmentForPet(petUID)
+        end
+    end
+end
+
+local function FillAssignmentsFromTracked(coins)
+    local freePets = {}
+    for _, uid in ipairs(trackedPets) do
+        if not petToTarget[uid] then
+            local cd = petCooldowns[uid] or 0
+            if tick() >= cd then table.insert(freePets, uid) end
+        end
+    end
+    if #freePets == 0 then return end
+    local available = GetAvailableBreakables(coins)
+    if #available == 0 then return end
+    local count = math.min(#freePets, #available)
+    for i = 1, count do
+        local pet = freePets[i]
+        local target = available[i]
+        if pet and target then
+            AssignPetToBreakable(pet, target.id)
+            task.wait(SAFE_MODE_DELAY)
+        end
+    end
+end
+
+local function CollectOrbsAndBags()
+    pcall(function() ClaimOrbs({}) end)
+    -- move lootbags to player HRP
+    local things = workspace:FindFirstChild("__THINGS") or workspace:FindFirstChild("__things")
+    if not things then return end
+    local bags = things:FindFirstChild("Lootbags")
+    if not bags then return end
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
+    for _, bag in ipairs(bags:GetChildren()) do
+        if bag and bag:IsA("BasePart") then
+            pcall(function() bag.CFrame = hrp.CFrame end)
+        end
+    end
+end
+
+-- ===== GUI (simple, robust) =====
+local function CreateGUI()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui") or LocalPlayer:WaitForChild("PlayerGui")
+    local screenGui = Instance.new("ScreenGui")
+    screenGui.Name = "PSX_AutoFarm_GUI"
+    screenGui.ResetOnSpawn = false
+    screenGui.Parent = playerGui
+
+    local frame = Instance.new("Frame", screenGui)
+    frame.Size = UDim2.new(0, 520, 0, 330)
+    frame.Position = UDim2.new(0.12, 0, 0.12, 0)
+    frame.BackgroundColor3 = Color3.fromRGB(22,22,22)
+    frame.Active = true
+    frame.Draggable = true
+    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
+
+    local title = Instance.new("TextLabel", frame)
+    title.Size = UDim2.new(1, -20, 0, 28)
+    title.Position = UDim2.new(0, 10, 0, 8)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.SourceSansBold
+    title.TextSize = 18
+    title.TextColor3 = Color3.new(1,1,1)
+    title.Text = "PSX AutoFarm — Safe Mode (One pet per breakable)"
+
+    local worldBtn = Instance.new("TextButton", frame)
+    worldBtn.Size = UDim2.new(0.34, -8, 0, 36)
+    worldBtn.Position = UDim2.new(0, 10, 0, 44)
+    worldBtn.Font = Enum.Font.SourceSans
+    worldBtn.TextSize = 14
+    worldBtn.Text = "World: " .. tostring(SelectedWorld)
+    worldBtn.BackgroundColor3 = Color3.fromRGB(70,130,180)
+    worldBtn.TextColor3 = Color3.new(1,1,1)
+    Instance.new("UICorner", worldBtn).CornerRadius = UDim.new(0,6)
+
+    local areaBtn = Instance.new("TextButton", frame)
+    areaBtn.Size = UDim2.new(0.34, -8, 0, 36)
+    areaBtn.Position = UDim2.new(0, 10, 0, 92)
+    areaBtn.Font = Enum.Font.SourceSans
+    areaBtn.TextSize = 14
+    areaBtn.Text = "Area: " .. tostring(SelectedArea)
+    areaBtn.BackgroundColor3 = Color3.fromRGB(100,149,237)
+    areaBtn.TextColor3 = Color3.new(1,1,1)
+    Instance.new("UICorner", areaBtn).CornerRadius = UDim.new(0,6)
+
+    local listFrame = Instance.new("Frame", frame)
+    listFrame.Size = UDim2.new(0.58, -12, 0, 200)
+    listFrame.Position = UDim2.new(0.40, 8, 0, 44)
+    listFrame.BackgroundColor3 = Color3.fromRGB(18,18,18)
+    Instance.new("UICorner", listFrame).CornerRadius = UDim.new(0,6)
+    listFrame.Visible = false
+
+    local function ClearList()
+        for _,c in ipairs(listFrame:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+    end
+
+    local function ShowWorlds()
+        ClearList()
+        listFrame.Visible = true
+        for w, _ in pairs(WorldsTable) do
+            local btn = Instance.new("TextButton", listFrame)
+            btn.Size = UDim2.new(1, -12, 0, 28)
+            btn.BackgroundColor3 = Color3.fromRGB(70,130,180)
+            btn.TextColor3 = Color3.new(1,1,1)
+            btn.Font = Enum.Font.SourceSans
+            btn.TextSize = 14
+            btn.Text = w
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+            btn.MouseButton1Click:Connect(function()
+                SelectedWorld = w
+                worldBtn.Text = "World: " .. SelectedWorld
+                local areas = WorldsTable[SelectedWorld] or {}
+                SelectedArea = areas[1] or ""
+                areaBtn.Text = "Area: " .. SelectedArea
+                listFrame.Visible = false
+            end)
+        end
+    end
+
+    local function ShowAreas()
+        ClearList()
+        listFrame.Visible = true
+        local areas = WorldsTable[SelectedWorld] or {}
+        for _, a in ipairs(areas) do
+            local btn = Instance.new("TextButton", listFrame)
+            btn.Size = UDim2.new(1, -12, 0, 28)
+            btn.BackgroundColor3 = Color3.fromRGB(100,149,237)
+            btn.TextColor3 = Color3.new(1,1,1)
+            btn.Font = Enum.Font.SourceSans
+            btn.TextSize = 14
+            btn.Text = a
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+            btn.MouseButton1Click:Connect(function()
+                SelectedArea = a
+                areaBtn.Text = "Area: " .. SelectedArea
+                listFrame.Visible = false
+            end)
+        end
+    end
+
+    worldBtn.MouseButton1Click:Connect(ShowWorlds)
+    areaBtn.MouseButton1Click:Connect(ShowAreas)
+
+    local toggleBtn = Instance.new("TextButton", frame)
+    toggleBtn.Size = UDim2.new(0.18, -6, 0, 36)
+    toggleBtn.Position = UDim2.new(0, 10, 0, 148)
+    toggleBtn.Text = "Start"
+    toggleBtn.Font = Enum.Font.SourceSansBold
+    toggleBtn.TextSize = 14
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(34,139,34)
+    toggleBtn.TextColor3 = Color3.new(1,1,1)
+    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0,6)
+
+    local equipBtn = Instance.new("TextButton", frame)
+    equipBtn.Size = UDim2.new(0.22, -6, 0, 36)
+    equipBtn.Position = UDim2.new(0.20, 6, 0, 148)
+    equipBtn.Text = "Pick & Equip Best"
+    equipBtn.Font = Enum.Font.SourceSansBold
+    equipBtn.TextSize = 14
+    equipBtn.BackgroundColor3 = Color3.fromRGB(70,130,180)
+    equipBtn.TextColor3 = Color3.new(1,1,1)
+    Instance.new("UICorner", equipBtn).CornerRadius = UDim.new(0,6)
+
+    local statusLabel = Instance.new("TextLabel", frame)
+    statusLabel.Size = UDim2.new(1, -20, 0, 80)
+    statusLabel.Position = UDim2.new(0, 10, 0, 196)
+    statusLabel.BackgroundTransparency = 1
+    statusLabel.Font = Enum.Font.SourceSans
+    statusLabel.TextSize = 14
+    statusLabel.TextColor3 = Color3.fromRGB(220,220,220)
+    statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
+
+    toggleBtn.MouseButton1Click:Connect(function()
+        Enabled = not Enabled
+        toggleBtn.Text = Enabled and "Stop" or "Start"
+        toggleBtn.BackgroundColor3 = Enabled and Color3.fromRGB(178,34,34) or Color3.fromRGB(34,139,34)
+        statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
+        print("[AutoFarm] Enabled:", Enabled)
+    end)
+
+    equipBtn.MouseButton1Click:Connect(function()
+        trackedPets = PickTopPetsFromSaveOnce()
+        if #trackedPets == 0 then
+            warn("[AutoFarm] No pets selected.")
+        else
+            EquipChosenPets(trackedPets)
+            print("[AutoFarm] Equipped and tracking", #trackedPets, "pets.")
+        end
+    end)
+
+    -- Minimize icon
+    local icon = Instance.new("TextButton", screenGui)
+    icon.Name = "PSX_AutoFarm_MinIcon"
+    icon.Size = UDim2.new(0, 90, 0, 36)
+    icon.Position = UDim2.new(0, frame.AbsolutePosition.X + frame.AbsoluteSize.X - 100, 0, frame.AbsolutePosition.Y)
+    icon.AnchorPoint = Vector2.new(0, 0)
+    icon.Text = "Hate"
+    icon.Font = Enum.Font.SourceSansBold
+    icon.TextSize = 16
+    icon.TextColor3 = Color3.new(1,1,1)
+    icon.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    Instance.new("UICorner", icon).CornerRadius = UDim.new(0,6)
+    icon.Visible = false
+    icon.Active = true; icon.Draggable = true
+
+    icon.MouseButton1Click:Connect(function()
+        icon.Visible = false
+        frame.Visible = true
+    end)
+
+    local minBtn = Instance.new("TextButton", frame)
+    minBtn.Size = UDim2.new(0, 38, 0, 24)
+    minBtn.Position = UDim2.new(1, -44, 0, 6)
+    minBtn.AnchorPoint = Vector2.new(0, 0)
+    minBtn.Text = "🔽"
+    minBtn.Font = Enum.Font.SourceSansBold
+    minBtn.TextSize = 18
+    minBtn.BackgroundTransparency = 0.2
+    minBtn.TextColor3 = Color3.new(1,1,1)
+    Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0,6)
+    minBtn.MouseButton1Click:Connect(function()
+        frame.Visible = false
+        icon.Visible = true
+        local pos = frame.AbsolutePosition
+        icon.Position = UDim2.new(0, pos.X + frame.AbsoluteSize.X - 100, 0, pos.Y)
+    end)
+
+    return {
+        ScreenGui = screenGui,
+        Frame = frame,
+        Icon = icon,
+        StatusLabel = statusLabel,
+        ToggleBtn = toggleBtn,
+        EquipBtn = equipBtn,
+        WorldBtn = worldBtn,
+        AreaBtn = areaBtn,
+        ListFrame = listFrame
+    }
+end
+
+local ui = CreateGUI()
+
+-- ===== MAIN LOOP =====
+task.spawn(function()
+    while true do
+        if Enabled then
+            if #trackedPets == 0 then
+                -- if user didn't press Pick & Equip Best, pick automatically once
+                trackedPets = PickTopPetsFromSaveOnce()
+                if #trackedPets > 0 then
+                    EquipChosenPets(trackedPets)
+                end
+            end
+
+            local rawCoins = GetCoins()
+            local coins = NormalizeCoinsTable(rawCoins)
+            if not coins then
+                task.wait(1)
+            else
+                CheckAssignmentsAndFree(coins)
+                FillAssignmentsFromTracked(coins)
+                CollectOrbsAndBags()
+            end
+        end
+        task.wait(AUTO_LOOP_DELAY)
+    end
+end)
+
+print("[AutoFarm] Loaded. Use GUI: Pick & Equip Best (optional) then Start.")
