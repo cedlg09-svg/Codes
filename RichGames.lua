@@ -1,4 +1,4 @@
--- PSX AutoFarm — Simple GUI + Area-only + One pet per breakable + All types
+-- PSX AutoFarm — Final: Simple UI + Area-only + One-pet-per-breakable + Minimize + Save position
 -- Paste into a NEW LocalScript and run
 
 local ok, mainErr = pcall(function()
@@ -10,6 +10,8 @@ local ok, mainErr = pcall(function()
     local MAIN_LOOP_DELAY = 0.8
     local EQUIP_WAIT = 0.45
     local RETARGET_DELAY = 0.3
+
+    local SAVE_FILENAME = "PSX_AutoFarm_UI_Pos.json" -- stored if writefile/readfile available
 
     -- ==== WORLDS TABLE ====
     local WorldsTable = {
@@ -26,6 +28,7 @@ local ok, mainErr = pcall(function()
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Workspace = game:GetService("Workspace")
+    local HttpService = game:GetService("HttpService")
     local LocalPlayer = Players.LocalPlayer
     assert(LocalPlayer, "LocalPlayer nil - run as LocalScript")
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -246,7 +249,6 @@ local ok, mainErr = pcall(function()
         layout.Padding = UDim.new(0,4)
 
         local function populate(opts)
-            -- clear old option buttons
             for _, c in ipairs(menu:GetChildren()) do
                 if not c:IsA("UIListLayout") then c:Destroy() end
             end
@@ -269,9 +271,7 @@ local ok, mainErr = pcall(function()
             menu.Size = UDim2.new(0, width, 0, math.min(#opts*24, 200))
         end
 
-        -- initial populate
         populate(options)
-
         btn.MouseButton1Click:Connect(function()
             menu.Visible = not menu.Visible
         end)
@@ -286,75 +286,141 @@ local ok, mainErr = pcall(function()
         }
     end
 
-    -- ==== GUI ====
+    -- ===== SAVE / LOAD UI POS =====
+    local function canWriteFile()
+        return type(writefile) == "function" and type(readfile) == "function"
+    end
+
+    local function save_ui_position(data)
+        if not canWriteFile() then return false end
+        pcall(function()
+            local json = HttpService:JSONEncode(data)
+            writefile(SAVE_FILENAME, json)
+        end)
+        return true
+    end
+
+    local function load_ui_position()
+        if not canWriteFile() then return nil end
+        local ok, dat = pcall(function()
+            local content = readfile(SAVE_FILENAME)
+            return HttpService:JSONDecode(content)
+        end)
+        if ok and type(dat) == "table" then
+            return dat
+        end
+        return nil
+    end
+
+    -- ==== GUI CREATION (simple clean small) ====
     local function CreateGUI()
+        -- create screengui
         local screenGui = Instance.new("ScreenGui")
         screenGui.Name = "PSX_AutoFarm_GUI_Simple"
         screenGui.ResetOnSpawn = false
         screenGui.Parent = PlayerGui
 
+        -- frame
         local frame = Instance.new("Frame", screenGui)
         frame.Size = UDim2.new(0, 320, 0, 220)
         frame.Position = UDim2.new(0.5, -160, 0.5, -110)
         frame.BackgroundColor3 = Color3.fromRGB(30,30,30)
+        frame.ZIndex = 50
         Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
 
-        local title = Instance.new("TextLabel", frame)
-        title.Size = UDim2.new(1, 0, 0, 26)
-        title.Position = UDim2.new(0, 0, 0, 6)
+        -- try restore saved position
+        local saved = load_ui_position()
+        if saved and type(saved) == "table" and saved.x and saved.y then
+            pcall(function()
+                frame.Position = UDim2.new(saved.scaleX or 0, saved.x, saved.scaleY or 0, saved.y)
+            end)
+        end
+
+        -- title bar (draggable only by this)
+        local titleBar = Instance.new("Frame", frame)
+        titleBar.Size = UDim2.new(1, 0, 0, 30)
+        titleBar.Position = UDim2.new(0, 0, 0, 0)
+        titleBar.BackgroundTransparency = 0.12
+        titleBar.BackgroundColor3 = Color3.fromRGB(22,22,22)
+        titleBar.ZIndex = 51
+        Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0,8)
+
+        local title = Instance.new("TextLabel", titleBar)
+        title.Size = UDim2.new(1, -48, 1, 0)
+        title.Position = UDim2.new(0, 8, 0, 0)
         title.BackgroundTransparency = 1
         title.Font = Enum.Font.SourceSansBold
         title.TextSize = 16
         title.TextColor3 = Color3.new(1,1,1)
         title.Text = "PSX AutoFarm"
 
-        -- Buttons at top
-        local pickBtn = Instance.new("TextButton", frame)
+        -- minimize button (option A: small "-")
+        local minBtn = Instance.new("TextButton", titleBar)
+        minBtn.Size = UDim2.new(0, 36, 0, 22)
+        minBtn.Position = UDim2.new(1, -44, 0, 4)
+        minBtn.AnchorPoint = Vector2.new(0, 0)
+        minBtn.Text = "—"
+        minBtn.Font = Enum.Font.SourceSansBold
+        minBtn.TextSize = 18
+        minBtn.BackgroundTransparency = 0.2
+        minBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0,6)
+
+        -- content container (everything below title bar)
+        local content = Instance.new("Frame", frame)
+        content.Size = UDim2.new(1, -16, 1, -46)
+        content.Position = UDim2.new(0, 8, 0, 34)
+        content.BackgroundTransparency = 1
+
+        -- Buttons at top inside content
+        local pickBtn = Instance.new("TextButton", content)
         pickBtn.Size = UDim2.new(0.48, -8, 0, 36)
-        pickBtn.Position = UDim2.new(0, 10, 0, 40)
+        pickBtn.Position = UDim2.new(0, 0, 0, 0)
         pickBtn.Text = "Pick Best Pets"
         pickBtn.Font = Enum.Font.SourceSansBold
         pickBtn.BackgroundColor3 = Color3.fromRGB(70,130,180)
         pickBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", pickBtn).CornerRadius = UDim.new(0,6)
 
-        local startBtn = Instance.new("TextButton", frame)
+        local startBtn = Instance.new("TextButton", content)
         startBtn.Size = UDim2.new(0.48, -8, 0, 36)
-        startBtn.Position = UDim2.new(0, 168, 0, 40)
+        startBtn.Position = UDim2.new(0, 156, 0, 0)
         startBtn.Text = "Start"
         startBtn.Font = Enum.Font.SourceSansBold
         startBtn.BackgroundColor3 = Color3.fromRGB(34,139,34)
         startBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
 
-        -- Dropdowns 5px below buttons:
-        -- Buttons Y = 40, height = 36 => bottom = 76. Next start posY = 76 + 5 = 81
-        local worldDropdown = makeDropdown(frame, 10, 81, 140, "World", (function()
+        -- Dropdowns (5px below buttons)
+        local worldDropdown, areaDropdown
+        -- compute dropdown positions relative to content (buttons top y=0, height=36 -> bottom 36 -> +5 -> 41)
+        local ddY = 36 + 5
+
+        worldDropdown = makeDropdown(content, 0, ddY, 150, "World", (function()
             local t = {}
             for k,_ in pairs(WorldsTable) do table.insert(t, k) end
             table.sort(t)
             return t
         end)(), function(selected)
             SelectedWorld = selected
-            -- update area options
             local areas = WorldsTable[SelectedWorld] or {}
-            areaDropdown.SetOptions(areas)
-            if #areas > 0 then
-                SelectedArea = areas[1]
-                areaDropdown.Button.Text = areas[1]
-            else
-                SelectedArea = ""
-                areaDropdown.Button.Text = "None"
+            if areaDropdown then
+                areaDropdown.SetOptions(areas)
+                if #areas > 0 then
+                    SelectedArea = areas[1]
+                    areaDropdown.Button.Text = areas[1]
+                else
+                    SelectedArea = ""
+                    areaDropdown.Button.Text = "None"
+                end
             end
-            -- clear assignments so pets retarget into new area
+            -- reset assignments so pets retarget into new area
             petToTarget = {}
             targetToPet = {}
             petCooldowns = {}
         end)
 
-        -- area dropdown below world dropdown:
-        -- world uses posY 81 and consumes posY..posY+46, so next posY = 81 + 46 + 5 = 132
-        local areaDropdown = makeDropdown(frame, 168, 81, 140, "Area", WorldsTable[SelectedWorld] or {}, function(selected)
+        areaDropdown = makeDropdown(content, 160, ddY, 150, "Area", WorldsTable[SelectedWorld] or {}, function(selected)
             SelectedArea = selected
             -- clear assignments when area changes
             petToTarget = {}
@@ -362,16 +428,101 @@ local ok, mainErr = pcall(function()
             petCooldowns = {}
         end)
 
-        -- Status label at bottom
+        -- status label at bottom of frame
         local status = Instance.new("TextLabel", frame)
-        status.Size = UDim2.new(1, -20, 0, 48)
-        status.Position = UDim2.new(0, 10, 0, 168)
+        status.Size = UDim2.new(1, -20, 0, 36)
+        status.Position = UDim2.new(0, 10, 1, -44)
         status.BackgroundTransparency = 1
         status.TextColor3 = Color3.new(1,1,1)
         status.TextWrapped = true
         status.Font = Enum.Font.SourceSans
         status.TextSize = 14
         status.Text = "Status: Idle"
+
+        -- draggable by title bar only
+        do
+            local dragging = false
+            local dragStart = nil
+            local startPos = nil
+            titleBar.InputBegan:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseButton1 then
+                    dragging = true
+                    dragStart = input.Position
+                    startPos = frame.Position
+                    input.Changed:Connect(function()
+                        if input.UserInputState == Enum.UserInputState.End then
+                            dragging = false
+                            -- save position on drag end
+                            pcall(function()
+                                local pos = frame.Position
+                                local data = {
+                                    x = pos.X.Offset,
+                                    y = pos.Y.Offset,
+                                    scaleX = pos.X.Scale,
+                                    scaleY = pos.Y.Scale
+                                }
+                                save_ui_position(data)
+                            end)
+                        end
+                    end)
+                end
+            end)
+            titleBar.InputChanged:Connect(function(input)
+                if input.UserInputType == Enum.UserInputType.MouseMovement then
+                    local moveInput = input
+                    -- connect global input changed
+                    game:GetService("UserInputService").InputChanged:Connect(function(i)
+                        if dragging and i == moveInput and dragStart and startPos then
+                            local delta = i.Position - dragStart
+                            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                        end
+                    end)
+                end
+            end)
+        end
+
+        -- minimize / expand behavior (collapse into small title bar)
+        local collapsed = false
+        local prevSize = frame.Size
+        local prevContentVisible = true
+        minBtn.MouseButton1Click:Connect(function()
+            if not collapsed then
+                -- collapse: shrink frame to titleBar height only
+                prevSize = frame.Size
+                content.Visible = false
+                status.Visible = false
+                frame.Size = UDim2.new(frame.Size.X.Scale, frame.Size.X.Offset, 0, 34)
+                collapsed = true
+            else
+                -- expand
+                frame.Size = prevSize
+                content.Visible = true
+                status.Visible = true
+                collapsed = false
+            end
+            -- save position/size
+            pcall(function()
+                local pos = frame.Position
+                local data = {
+                    x = pos.X.Offset,
+                    y = pos.Y.Offset,
+                    scaleX = pos.X.Scale,
+                    scaleY = pos.Y.Scale
+                }
+                save_ui_position(data)
+            end)
+        end)
+
+        -- titleBar click also toggles expand/collapse if collapsed
+        titleBar.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 and collapsed then
+                -- expand back
+                frame.Size = prevSize
+                content.Visible = true
+                status.Visible = true
+                collapsed = false
+            end
+        end)
 
         -- Button behaviors
         pickBtn.MouseButton1Click:Connect(function()
@@ -431,13 +582,13 @@ local ok, mainErr = pcall(function()
 
                 local coins = GetCoinsRaw()
                 if not coins then
-                    ui.Status.Text = "Status: Waiting for coins..."
+                    if ui and ui.Status then ui.Status.Text = "Status: Waiting for coins..." end
                     task.wait(1)
                 else
-                    -- update status label to show selected area (explicit)
-                    ui.Status.Text = ("Status: Farming (%s - %s)"):format(tostring(SelectedWorld), tostring(SelectedArea))
+                    -- update status label (explicit with selected)
+                    if ui and ui.Status then ui.Status.Text = ("Status: Farming (%s - %s)"):format(tostring(SelectedWorld), tostring(SelectedArea)) end
 
-                    -- free stale assignments
+                    -- free stale assignments if breakables disappear
                     FreeStaleAssignments(coins)
 
                     -- fill assignments (one pet per breakable) for selected area only
@@ -449,9 +600,9 @@ local ok, mainErr = pcall(function()
                     -- collect lootbags to player
                     pcall(function()
                         local things = Workspace:FindFirstChild("__THINGS") or Workspace:FindFirstChild("__things")
-                        if things then
+                        if things and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
                             local bags = things:FindFirstChild("Lootbags")
-                            if bags and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                            if bags then
                                 for _, bag in ipairs(bags:GetChildren()) do
                                     if bag and bag:IsA("BasePart") then
                                         pcall(function() bag.CFrame = LocalPlayer.Character.HumanoidRootPart.CFrame end)
