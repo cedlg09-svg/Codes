@@ -1,4 +1,4 @@
--- PSX AutoFarm — Final (clean, minimal, area-only, one-per-breakable, collapse -> 5x5)
+-- PSX AutoFarm — Final Minimal UI (static world/area dropdowns, non-draggable, minimize -> top-left "Hate")
 -- Paste into a NEW LocalScript and run
 
 local ok, mainErr = pcall(function()
@@ -23,7 +23,6 @@ local ok, mainErr = pcall(function()
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Workspace = game:GetService("Workspace")
-    local UserInputService = game:GetService("UserInputService")
     local LocalPlayer = Players.LocalPlayer
     assert(LocalPlayer, "LocalPlayer nil - run as LocalScript")
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
@@ -198,243 +197,193 @@ local ok, mainErr = pcall(function()
         end
     end
 
-    local function makeDropdown(parent, posX, posY, width, labelText, options, onSelect)
-        local label = Instance.new("TextLabel", parent)
-        label.Size = UDim2.new(0, width, 0, 18)
-        label.Position = UDim2.new(0, posX, 0, posY)
-        label.BackgroundTransparency = 1
-        label.Text = labelText
-        label.TextColor3 = Color3.new(1,1,1)
-        label.Font = Enum.Font.SourceSans
-        label.TextSize = 14
-
-        local btn = Instance.new("TextButton", parent)
-        btn.Size = UDim2.new(0, width, 0, 26)
-        btn.Position = UDim2.new(0, posX, 0, posY + 18)
-        btn.Text = options[1] or "None"
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 14
-        btn.TextColor3 = Color3.new(1,1,1)
-        btn.BackgroundColor3 = Color3.fromRGB(20,20,20)
-        btn.AutoButtonColor = true
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
-
-        local menu = Instance.new("Frame", parent)
-        menu.Size = UDim2.new(0, width, 0, math.min(#options*24, 200))
-        menu.Position = UDim2.new(0, posX, 0, posY + 46)
-        menu.Visible = false
-        menu.BackgroundColor3 = Color3.fromRGB(12,12,12)
-        Instance.new("UICorner", menu).CornerRadius = UDim.new(0,6)
-        local layout = Instance.new("UIListLayout", menu)
-        layout.Padding = UDim.new(0,4)
-
-        local function populate(opts)
-            for _, c in ipairs(menu:GetChildren()) do
-                if not c:IsA("UIListLayout") then c:Destroy() end
+    local function CheckAssignments(coins)
+        local present = {}
+        if coins then for id, _ in pairs(coins) do present[id] = true end end
+        for petUID, tid in pairs(petToTarget) do
+            if not present[tid] then
+                ClearAssignmentForPet(petUID)
             end
-            for _, opt in ipairs(opts) do
-                local optBtn = Instance.new("TextButton", menu)
-                optBtn.Size = UDim2.new(1, -8, 0, 20)
-                optBtn.Position = UDim2.new(0,4,0,0)
-                optBtn.Text = opt
-                optBtn.BackgroundTransparency = 1
-                optBtn.Font = Enum.Font.SourceSans
-                optBtn.TextColor3 = Color3.new(1,1,1)
-                optBtn.TextSize = 14
-                optBtn.AutoButtonColor = true
-                optBtn.MouseButton1Click:Connect(function()
-                    btn.Text = opt
-                    menu.Visible = false
-                    onSelect(opt)
-                end)
-            end
-            menu.Size = UDim2.new(0, width, 0, math.min(#opts*24, 200))
         end
-
-        populate(options)
-        btn.MouseButton1Click:Connect(function()
-            menu.Visible = not menu.Visible
-        end)
-
-        return {
-            Button = btn,
-            Menu = menu,
-            Label = label,
-            SetOptions = function(newOptions) populate(newOptions) end
-        }
     end
 
+    local function CycleOnce()
+        local coins = GetCoinsRaw()
+        if not coins then return end
+        CheckAssignments(coins)
+        FillAssignments(coins)
+        pcall(ClaimOrbs, {})
+        pcall(function()
+            local things = Workspace:FindFirstChild("__THINGS") or Workspace:FindFirstChild("__things")
+            if things and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                local bags = things:FindFirstChild("Lootbags")
+                if bags then
+                    for _, bag in ipairs(bags:GetChildren()) do
+                        if bag and bag:IsA("BasePart") then
+                            pcall(function() bag.CFrame = LocalPlayer.Character.HumanoidRootPart.CFrame end)
+                        end
+                    end
+                end
+            end
+        end)
+    end
+
+    -- UI creation
     local function CreateGUI()
         local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "PSX_AutoFarm_GUI_Final"
+        screenGui.Name = "PSX_AutoFarm_GUI_Min"
         screenGui.ResetOnSpawn = false
         screenGui.Parent = PlayerGui
 
         local frame = Instance.new("Frame", screenGui)
-        frame.Size = UDim2.new(0, 520, 0, 340)
-        frame.Position = UDim2.new(0.12, 0, 0.12, 0)
-        frame.BackgroundColor3 = Color3.fromRGB(10,10,10)
-        frame.Active = true
-        frame.ZIndex = 50
+        frame.Size = UDim2.new(0, 360, 0, 180)
+        frame.Position = UDim2.new(0.5, -180, 0.5, -90)
+        frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
+        frame.BorderSizePixel = 0
         Instance.new("UICorner", frame).CornerRadius = UDim.new(0,8)
 
-        local titleBar = Instance.new("Frame", frame)
-        titleBar.Size = UDim2.new(1, 0, 0, 34)
-        titleBar.Position = UDim2.new(0, 0, 0, 0)
-        titleBar.BackgroundColor3 = Color3.fromRGB(8,8,8)
-        Instance.new("UICorner", titleBar).CornerRadius = UDim.new(0,8)
-
-        local title = Instance.new("TextLabel", titleBar)
-        title.Size = UDim2.new(1, -48, 1, 0)
-        title.Position = UDim2.new(0, 8, 0, 0)
+        local title = Instance.new("TextLabel", frame)
+        title.Size = UDim2.new(1, -60, 0, 28)
+        title.Position = UDim2.new(0, 8, 0, 6)
         title.BackgroundTransparency = 1
         title.Font = Enum.Font.SourceSansBold
         title.TextSize = 16
         title.TextColor3 = Color3.new(1,1,1)
-        title.Text = "PSX AutoFarm — One pet per breakable"
+        title.Text = "PSX AutoFarm"
 
-        local closeBtn = Instance.new("TextButton", titleBar)
+        local closeBtn = Instance.new("TextButton", frame)
         closeBtn.Size = UDim2.new(0, 36, 0, 24)
-        closeBtn.Position = UDim2.new(1, -44, 0, 5)
+        closeBtn.Position = UDim2.new(1, -44, 0, 6)
         closeBtn.Text = "✕"
         closeBtn.Font = Enum.Font.SourceSansBold
         closeBtn.TextSize = 16
-        closeBtn.BackgroundTransparency = 0.15
+        closeBtn.BackgroundTransparency = 0.2
         closeBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0,6)
 
-        local content = Instance.new("Frame", frame)
-        content.Position = UDim2.new(0, 12, 0, 44)
-        content.Size = UDim2.new(0, 496, 0, 240)
-        content.BackgroundTransparency = 1
-
-        local pickBtn = Instance.new("TextButton", content)
-        pickBtn.Size = UDim2.new(0, 220, 0, 36)
-        pickBtn.Position = UDim2.new(0, 0, 0, 0)
+        local pickBtn = Instance.new("TextButton", frame)
+        pickBtn.Size = UDim2.new(0, 170, 0, 32)
+        pickBtn.Position = UDim2.new(0, 8, 0, 40)
         pickBtn.Text = "Pick Best Pets"
         pickBtn.Font = Enum.Font.SourceSansBold
         pickBtn.TextSize = 14
-        pickBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
+        pickBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
         pickBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", pickBtn).CornerRadius = UDim.new(0,6)
 
-        local startBtn = Instance.new("TextButton", content)
-        startBtn.Size = UDim2.new(0, 220, 0, 36)
-        startBtn.Position = UDim2.new(0, 232, 0, 0)
+        local startBtn = Instance.new("TextButton", frame)
+        startBtn.Size = UDim2.new(0, 170, 0, 32)
+        startBtn.Position = UDim2.new(0, 182, 0, 40)
         startBtn.Text = "Start"
         startBtn.Font = Enum.Font.SourceSansBold
         startBtn.TextSize = 14
-        startBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
+        startBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
         startBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
 
-        local listFrame = Instance.new("Frame", frame)
-        listFrame.Size = UDim2.new(0, 280, 0, 200)
-        listFrame.Position = UDim2.new(0, 12, 0, 92)
-        listFrame.BackgroundColor3 = Color3.fromRGB(6,6,6)
-        Instance.new("UICorner", listFrame).CornerRadius = UDim.new(0,6)
-        listFrame.Visible = false
-        local listLayout = Instance.new("UIListLayout", listFrame)
-        listLayout.Padding = UDim.new(0,6)
-        listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-
+        -- dropdowns 5px below buttons
         local worldBtn = Instance.new("TextButton", frame)
-        worldBtn.Size = UDim2.new(0, 220, 0, 36)
-        worldBtn.Position = UDim2.new(0, 12, 0, 80)
+        worldBtn.Size = UDim2.new(0, 170, 0, 28)
+        worldBtn.Position = UDim2.new(0, 8, 0, 82) -- 40 + 32 + 10 = 82
         worldBtn.Text = "World: " .. tostring(SelectedWorld)
         worldBtn.Font = Enum.Font.SourceSans
         worldBtn.TextSize = 14
-        worldBtn.BackgroundColor3 = Color3.fromRGB(16,16,16)
+        worldBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
         worldBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", worldBtn).CornerRadius = UDim.new(0,6)
 
         local areaBtn = Instance.new("TextButton", frame)
-        areaBtn.Size = UDim2.new(0, 220, 0, 36)
-        areaBtn.Position = UDim2.new(0, 240, 0, 80)
+        areaBtn.Size = UDim2.new(0, 170, 0, 28)
+        areaBtn.Position = UDim2.new(0, 182, 0, 82)
         areaBtn.Text = "Area: " .. tostring(SelectedArea)
         areaBtn.Font = Enum.Font.SourceSans
         areaBtn.TextSize = 14
-        areaBtn.BackgroundColor3 = Color3.fromRGB(14,14,14)
+        areaBtn.BackgroundColor3 = Color3.fromRGB(16,16,16)
         areaBtn.TextColor3 = Color3.new(1,1,1)
         Instance.new("UICorner", areaBtn).CornerRadius = UDim.new(0,6)
 
+        -- small dropdown panel (appears under the corresponding button)
+        local dropdownPanel = Instance.new("Frame", frame)
+        dropdownPanel.Size = UDim2.new(0, 344, 0, 140)
+        dropdownPanel.Position = UDim2.new(0, 8, 0, 116)
+        dropdownPanel.BackgroundColor3 = Color3.fromRGB(14,14,14)
+        dropdownPanel.Visible = false
+        Instance.new("UICorner", dropdownPanel).CornerRadius = UDim.new(0,6)
+        local dropLayout = Instance.new("UIListLayout", dropdownPanel)
+        dropLayout.Padding = UDim.new(0,6)
+        dropLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
         local statusLabel = Instance.new("TextLabel", frame)
-        statusLabel.Size = UDim2.new(0.98, -20, 0, 28)
-        statusLabel.Position = UDim2.new(0, 12, 1, -40)
+        statusLabel.Size = UDim2.new(1, -16, 0, 20)
+        statusLabel.Position = UDim2.new(0, 8, 1, -32)
         statusLabel.BackgroundTransparency = 1
         statusLabel.Font = Enum.Font.SourceSans
-        statusLabel.TextSize = 14
-        statusLabel.TextColor3 = Color3.fromRGB(220,220,220)
-        statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
+        statusLabel.TextSize = 13
+        statusLabel.TextColor3 = Color3.fromRGB(200,200,200)
+        statusLabel.Text = string.format("World: %s  |  Area: %s  |  Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
 
-        local equipBtn = Instance.new("TextButton", frame)
-        equipBtn.Size = UDim2.new(0, 140, 0, 26)
-        equipBtn.Position = UDim2.new(0, 12, 1, -76)
-        equipBtn.Text = "Equip Best (Remote)"
-        equipBtn.Font = Enum.Font.SourceSans
-        equipBtn.TextSize = 12
-        equipBtn.BackgroundColor3 = Color3.fromRGB(16,16,16)
-        equipBtn.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", equipBtn).CornerRadius = UDim.new(0,6)
-
-        local function ClearList()
-            for _,c in ipairs(listFrame:GetChildren()) do if c:IsA("TextButton") then c:Destroy() end end
+        local function clearDropdownItems()
+            for _, c in ipairs(dropdownPanel:GetChildren()) do
+                if c:IsA("TextButton") then c:Destroy() end
+            end
         end
 
-        local function ShowWorlds()
-            ClearList()
-            listFrame.Visible = true
+        local function showWorldList()
+            clearDropdownItems()
+            dropdownPanel.Visible = true
             for w, _ in pairs(WorldsTable) do
-                local btn = Instance.new("TextButton", listFrame)
-                btn.Size = UDim2.new(1, -12, 0, 28)
-                btn.BackgroundColor3 = Color3.fromRGB(16,16,16)
-                btn.TextColor3 = Color3.new(1,1,1)
-                btn.Font = Enum.Font.SourceSans
-                btn.TextSize = 14
-                btn.Text = w
-                Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
-                btn.MouseButton1Click:Connect(function()
+                local b = Instance.new("TextButton", dropdownPanel)
+                b.Size = UDim2.new(1, -12, 0, 26)
+                b.Position = UDim2.new(0, 6, 0, 0)
+                b.BackgroundColor3 = Color3.fromRGB(18,18,18)
+                b.TextColor3 = Color3.new(1,1,1)
+                b.Font = Enum.Font.SourceSans
+                b.TextSize = 14
+                b.Text = w
+                Instance.new("UICorner", b).CornerRadius = UDim.new(0,6)
+                b.MouseButton1Click:Connect(function()
                     SelectedWorld = w
                     worldBtn.Text = "World: " .. SelectedWorld
                     local areas = WorldsTable[SelectedWorld] or {}
                     SelectedArea = areas[1] or ""
                     areaBtn.Text = "Area: " .. SelectedArea
-                    listFrame.Visible = false
+                    dropdownPanel.Visible = false
                     petToTarget = {}
                     targetToPet = {}
                     petCooldowns = {}
-                    statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
+                    statusLabel.Text = string.format("World: %s  |  Area: %s  |  Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
                 end)
             end
         end
 
-        local function ShowAreas()
-            ClearList()
-            listFrame.Visible = true
+        local function showAreaList()
+            clearDropdownItems()
+            dropdownPanel.Visible = true
             local areas = WorldsTable[SelectedWorld] or {}
             for _, a in ipairs(areas) do
-                local btn = Instance.new("TextButton", listFrame)
-                btn.Size = UDim2.new(1, -12, 0, 28)
-                btn.BackgroundColor3 = Color3.fromRGB(14,14,14)
-                btn.TextColor3 = Color3.new(1,1,1)
-                btn.Font = Enum.Font.SourceSans
-                btn.TextSize = 14
-                btn.Text = a
-                Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
-                btn.MouseButton1Click:Connect(function()
+                local b = Instance.new("TextButton", dropdownPanel)
+                b.Size = UDim2.new(1, -12, 0, 26)
+                b.Position = UDim2.new(0, 6, 0, 0)
+                b.BackgroundColor3 = Color3.fromRGB(16,16,16)
+                b.TextColor3 = Color3.new(1,1,1)
+                b.Font = Enum.Font.SourceSans
+                b.TextSize = 14
+                b.Text = a
+                Instance.new("UICorner", b).CornerRadius = UDim.new(0,6)
+                b.MouseButton1Click:Connect(function()
                     SelectedArea = a
                     areaBtn.Text = "Area: " .. SelectedArea
-                    listFrame.Visible = false
+                    dropdownPanel.Visible = false
                     petToTarget = {}
                     targetToPet = {}
                     petCooldowns = {}
-                    statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
+                    statusLabel.Text = string.format("World: %s  |  Area: %s  |  Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
                 end)
             end
         end
 
-        worldBtn.MouseButton1Click:Connect(ShowWorlds)
-        areaBtn.MouseButton1Click:Connect(ShowAreas)
+        worldBtn.MouseButton1Click:Connect(showWorldList)
+        areaBtn.MouseButton1Click:Connect(showAreaList)
 
         pickBtn.MouseButton1Click:Connect(function()
             statusLabel.Text = "Equipping best pets..."
@@ -456,7 +405,7 @@ local ok, mainErr = pcall(function()
         startBtn.MouseButton1Click:Connect(function()
             Enabled = not Enabled
             startBtn.Text = Enabled and "Stop" or "Start"
-            statusLabel.Text = string.format("World: %s | Area: %s | Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
+            statusLabel.Text = string.format("World: %s  |  Area: %s  |  Farming: %s", tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No"))
         end)
 
         equipBtn.MouseButton1Click:Connect(function()
@@ -470,59 +419,31 @@ local ok, mainErr = pcall(function()
             end
         end)
 
-        local icon = Instance.new("TextButton", PlayerGui)
-        icon.Name = "PSX_AutoFarm_MinIcon"
-        icon.Size = UDim2.new(0, 5, 0, 5)
-        icon.Position = frame.Position
-        icon.AnchorPoint = Vector2.new(0,0)
-        icon.Text = ""
-        icon.Font = Enum.Font.SourceSansBold
-        icon.TextSize = 10
-        icon.TextColor3 = Color3.new(1,1,1)
-        icon.BackgroundColor3 = Color3.fromRGB(18,18,18)
-        icon.AutoButtonColor = true
-        icon.Visible = false
-        Instance.new("UICorner", icon).CornerRadius = UDim.new(0,2)
-        icon.Active = true
-        icon.Draggable = true
-
-        icon.MouseButton1Click:Connect(function()
-            icon.Visible = false
-            frame.Visible = true
-        end)
-
-        do
-            local dragging, dragInput, dragStart, startPos = false, nil, nil, nil
-            titleBar.InputBegan:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                    dragging = true
-                    dragStart = input.Position
-                    startPos = frame.Position
-                    input.Changed:Connect(function()
-                        if input.UserInputState == Enum.UserInputState.End then dragging = false end
-                    end)
-                end
-            end)
-            titleBar.InputChanged:Connect(function(input)
-                if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end
-            end)
-            UserInputService.InputChanged:Connect(function(input)
-                if input == dragInput and dragging and dragStart and startPos then
-                    local delta = input.Position - dragStart
-                    frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-                end
-            end)
-        end
-
         closeBtn.MouseButton1Click:Connect(function()
-            local p = frame.Position
-            icon.Position = p
+            local iconGui = PlayerGui:FindFirstChild("PSX_AutoFarm_MinIconGui")
+            if iconGui then iconGui:Destroy() end
+            local iconGuiNew = Instance.new("ScreenGui", PlayerGui)
+            iconGuiNew.Name = "PSX_AutoFarm_MinIconGui"
+            local icon = Instance.new("TextButton", iconGuiNew)
+            icon.Name = "PSX_AutoFarm_Hate"
+            icon.Size = UDim2.new(0, 28, 0, 28)
+            icon.Position = UDim2.new(0, 8, 0, 48) -- fixed top-left under settings
+            icon.Text = "Hate"
+            icon.Font = Enum.Font.SourceSansBold
+            icon.TextSize = 12
+            icon.TextColor3 = Color3.new(1,1,1)
+            icon.BackgroundColor3 = Color3.fromRGB(18,18,18)
+            Instance.new("UICorner", icon).CornerRadius = UDim.new(0,6)
+            icon.MouseButton1Click:Connect(function()
+                iconGuiNew:Destroy()
+                dropdownPanel.Visible = false
+                frame.Visible = true
+            end)
             frame.Visible = false
-            icon.Visible = true
-            listFrame.Visible = false
+            dropdownPanel.Visible = false
         end)
 
-        return { Gui = screenGui, Frame = frame, StatusLabel = statusLabel, Icon = icon }
+        return { Gui = screenGui, Frame = frame, Status = statusLabel }
     end
 
     local ui = CreateGUI()
@@ -539,40 +460,19 @@ local ok, mainErr = pcall(function()
                     task.wait(EQUIP_WAIT)
                 end
 
-                local coins = GetCoinsRaw()
-                if not coins then
-                    if ui and ui.StatusLabel then ui.StatusLabel.Text = "Waiting for coins..." end
-                    task.wait(1)
-                else
-                    if ui and ui.StatusLabel then ui.StatusLabel.Text = ("World: %s | Area: %s | Farming: %s"):format(tostring(SelectedWorld), tostring(SelectedArea), tostring(Enabled and "Yes" or "No")) end
-                    FreeStaleAssignments(coins)
-                    FillAssignments(coins)
-                    pcall(function() ClaimOrbs({}) end)
-                    pcall(function()
-                        local things = Workspace:FindFirstChild("__THINGS") or Workspace:FindFirstChild("__things")
-                        if things and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                            local bags = things:FindFirstChild("Lootbags")
-                            if bags then
-                                for _, bag in ipairs(bags:GetChildren()) do
-                                    if bag and bag:IsA("BasePart") then
-                                        pcall(function() bag.CFrame = LocalPlayer.Character.HumanoidRootPart.CFrame end)
-                                    end
-                                end
-                            end
-                        end
-                    end)
-                end
+                local ok, err = pcall(function() CycleOnce() end)
+                if not ok then warn("Farm cycle error:", tostring(err)) end
             end
             task.wait(MAIN_LOOP_DELAY)
         end
     end)
 
-    print("[AutoFarm] loaded.")
+    print("[AutoFarm] Minimal UI version loaded.")
 
 end)
 
 if not ok then
     warn("[AutoFarm] Startup error:", mainErr)
 else
-    print("[AutoFarm] script executed successfully.")
+    print("[AutoFarm] Script executed successfully.")
 end
