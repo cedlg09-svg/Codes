@@ -295,8 +295,8 @@ local ok, mainErr = pcall(function()
     -- ======= RAYFIELD UI LOADING =======
     local Rayfield
     local success, lib = pcall(function()
-        return loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source"))()
-    end)
+    return loadstring(game:HttpGet("https://raw.githubusercontent.com/SiriusSoftwareLtd/Rayfield/main/source.lua"))()
+end)
     if success and type(lib) == "table" then Rayfield = lib else Rayfield = nil warn("[Hate AF] Rayfield failed to load; UI will fallback to simple print/status only.") end
 
     -- ======= UI & CONTROL HOOKS =======
