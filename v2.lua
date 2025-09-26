@@ -1,18 +1,18 @@
--- Hate's Quality of Life (Full) - Robust Rayfield loader + Autofarm
--- Paste into a NEW LocalScript and run (LocalScript required)
+-- Hate's Autofarm — Final Full Build
+-- Paste into a NEW LocalScript and run in Delta / normal environment
 
 local ok, mainErr = pcall(function()
 
-    ----------------- CONFIG -----------------
+    -- ======= CONFIG =======
+    local SAFE_DELAY_BETWEEN_ASSIGN = 0.18
     local JOIN_DELAY = 0.06
     local CHANGE_DELAY = 0.04
     local MAIN_LOOP_DELAY = 0.8
-    local SAFE_LOOP_DELAY = 2.0
+    local SAFE_EXTRA_DELAY = 0.6
     local EQUIP_WAIT = 0.45
     local RETARGET_DELAY = 0.3
-    local MAX_ASSIGN_PER_CYCLE = 6
-    local MAX_ASSIGN_PER_CYCLE_SAFE = 2
 
+    -- ======= STATIC WORLDS TABLE (your original) =======
     local WorldsTable = {
         ["Spawn"] = {"Shop","Town","Forest","Beach","Mine","Winter","Glacier","Desert","Volcano","Cave","Tech Entry","VIP"},
         ["Fantasy"] = {"Fantasy Shop","Enchanted Forest","Portals","Ancient Island","Samurai Island","Candy Island","Haunted Island","Hell Island","Heaven Island","Heaven's Gate"},
@@ -25,7 +25,7 @@ local ok, mainErr = pcall(function()
 
     local TargetTypeOptions = {"Any","Coins","Diamonds","Chests","Breakables"}
 
-    ----------------- SERVICES -----------------
+    -- ======= SERVICES & BASIC SETUP =======
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Workspace = game:GetService("Workspace")
@@ -35,9 +35,11 @@ local ok, mainErr = pcall(function()
     local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
     local Network = ReplicatedStorage:FindFirstChild("Network")
-    if not Network then warn("[Hate AutoFarm] ReplicatedStorage.Network missing - remotes may be missing") end
+    if not Network then
+        warn("[Hate AutoFarm] ReplicatedStorage.Network not found. Remotes may be missing.")
+    end
 
-    ----------------- SAFE REMOTES -----------------
+    -- ======= SAFE REMOTE CALLER (no varargs at top-level) =======
     local function CallRemote(name, argsTable)
         argsTable = argsTable or {}
         if not Network then return false, "Network missing" end
@@ -69,17 +71,19 @@ local ok, mainErr = pcall(function()
         return ok
     end
 
-    ----------------- UTIL -----------------
-    local function safe_delay(t,f) if type(t)=="number" and type(f)=="function" then task.delay(t,f) end end
+    -- ======= UTILITIES =======
+    local function safe_delay(t, f) if type(t)=="number" and type(f)=="function" then task.delay(t, f) end end
     local function safeNumber(x) if type(x)=="number" then return x elseif type(x)=="string" then return tonumber(x) or 0 end return 0 end
-    local function trim(s) return tostring(s):match("^%s*(.-)%s*$") or "" end
 
     local function buildPetListFromSave(save)
         if not save then return {} end
         local petsTbl = save.Pets or save.pets or {}
         local out = {}
         for k,v in pairs(petsTbl) do
-            if type(v) == "table" then v.uid = v.uid or k; table.insert(out, v) end
+            if type(v) == "table" then
+                v.uid = v.uid or k
+                table.insert(out, v)
+            end
         end
         return out
     end
@@ -104,24 +108,18 @@ local ok, mainErr = pcall(function()
         return chosen
     end
 
-    ----------------- STATE -----------------
+    -- ======= STATE =======
     local SelectedWorld = "Spawn"
-    local SelectedArea = "Town"
+    local SelectedArea = (WorldsTable["Spawn"] and WorldsTable["Spawn"][1]) or ""
     local TargetNearestType = "Any"
-
-    local Enabled = false      -- Normal autofarm
-    local SafeEnabled = false  -- Safe mode
-    local BlatantEnabled = false -- Blatant mode
-    local NearestEnabled = false -- Target nearest
-
+    local Mode = "None" -- "None","Normal","Safe","Blatant","Nearest"
     local trackedPets = {}
     local petToTarget = {}
     local targetToPet = {}
     local petCooldowns = {}
-    local blatantlyAssignedTargets = {}
 
-    ----------------- ASSIGN HELPERS -----------------
-    local function ClearAssignmentForPet(uid)
+    -- ======= ASSIGNMENT HELPERS =======
+    local function ClearAssignment(uid)
         if not uid then return end
         local t = petToTarget[uid]
         if t then petToTarget[uid] = nil; targetToPet[t] = nil end
@@ -132,61 +130,73 @@ local ok, mainErr = pcall(function()
         local present = {}
         if coins then for id,_ in pairs(coins) do present[id] = true end end
         for uid, tid in pairs(petToTarget) do
-            if not present[tid] then ClearAssignmentForPet(uid) end
-        end
-        for tId,_ in pairs(blatantlyAssignedTargets) do
-            if not present[tId] then blatantlyAssignedTargets[tId] = nil end
+            if not present[tid] then ClearAssignment(uid) end
         end
     end
 
-    local function GetAvailableBreakablesInArea(coins)
-        local out = {}
-        if not coins then return out end
-        for id, item in pairs(coins) do
-            if type(item) == "table" then
-                local w = item.w or item.world
-                local a = item.a or item.area
-                if tostring(w) == tostring(SelectedWorld) and tostring(a):lower() == tostring(SelectedArea):lower() then
-                    if not targetToPet[id] then table.insert(out, {id = id, data = item}) end
-                end
-            end
-        end
-        return out
-    end
-
-    local function AssignPetToBreakable(petUID, breakId, safeMode)
-        if not petUID or not breakId then return false end
-        if safeMode then
-            local j = JOIN_DELAY + math.random(80,220)/1000
-            local c = CHANGE_DELAY + math.random(80,220)/1000
-            safe_delay(0, function() JoinCoin(breakId, {petUID}) end)
-            safe_delay(j, function() ChangePetTarget(petUID, "Coin", breakId) end)
-            safe_delay(j + c, function() FarmCoin(breakId, petUID) end)
-        else
-            safe_delay(0, function() JoinCoin(breakId, {petUID}) end)
-            safe_delay(JOIN_DELAY, function() ChangePetTarget(petUID, "Coin", breakId) end)
-            safe_delay(JOIN_DELAY + CHANGE_DELAY, function() FarmCoin(breakId, petUID) end)
-        end
-        petToTarget[petUID] = breakId
-        targetToPet[breakId] = petUID
-        petCooldowns[petUID] = tick()
+    local function matchesTargetType(ttype, coinData)
+        if not ttype or ttype == "Any" then return true end
+        if not coinData then return false end
+        local name = tostring(coinData.n or coinData.name or ""):lower()
+        if ttype == "Coins" then return (name:find("coin") ~= nil) end
+        if ttype == "Diamonds" then return (name:find("diamond") ~= nil or name:find("gem") ~= nil) end
+        if ttype == "Chests" then return (name:find("chest") ~= nil or name:find("crate") ~= nil) end
+        if ttype == "Breakables" then return true end
         return true
     end
 
-    local function FillAssignments_NormalOrSafe(coins, safeMode)
+    local function GetAvailableBreakablesForArea(coins)
+        local avail = {}
+        if not coins then return avail end
+        for id, data in pairs(coins) do
+            if type(data) == "table" then
+                local w = tostring(data.w or data.world or "")
+                local a = tostring(data.a or data.area or "")
+                if w == tostring(SelectedWorld) and a == tostring(SelectedArea) and not targetToPet[id] and matchesTargetType(TargetNearestType, data) then
+                    table.insert(avail, {id = id, data = data})
+                end
+            end
+        end
+        return avail
+    end
+
+    local function AssignPetToBreakable(uid, breakId, safe)
+        if not uid or not breakId then return false end
+        if safe then
+            local j = JOIN_DELAY + math.random(80,220)/1000
+            local c = CHANGE_DELAY + math.random(80,220)/1000
+            safe_delay(0, function() JoinCoin(breakId, {uid}) end)
+            safe_delay(j, function() ChangePetTarget(uid, "Coin", breakId) end)
+            safe_delay(j + c, function() FarmCoin(breakId, uid) end)
+        else
+            safe_delay(0, function() JoinCoin(breakId, {uid}) end)
+            safe_delay(JOIN_DELAY, function() ChangePetTarget(uid, "Coin", breakId) end)
+            safe_delay(JOIN_DELAY + CHANGE_DELAY, function() FarmCoin(breakId, uid) end)
+        end
+        petToTarget[uid] = breakId
+        targetToPet[breakId] = uid
+        petCooldowns[uid] = tick()
+        return true
+    end
+
+    local function FillAssignmentsNormal(coins)
         local petUIDs = (function()
             local u = {}
             local save = GetSave()
             if save and save.Pets then
                 for _, p in pairs(save.Pets) do
-                    if type(p)=="table" and p.uid and (p.equipped==true or p.eq==true or p[1]==true or p["1"]==true) then table.insert(u,p.uid) end
+                    if type(p)=="table" and p.uid then
+                        local isEq = false
+                        if p.equipped == true or p.eq == true or p[1] == true or p["1"] == true then isEq = true end
+                        if isEq then table.insert(u, p.uid) end
+                    end
                 end
             end
-            if #u==0 then return pickTopNFromSave() end
+            if #u == 0 then return pickTopNFromSave() end
             return u
         end)()
-        if #petUIDs == 0 then return end
 
+        if #petUIDs == 0 then return end
         local freePets = {}
         for _, uid in ipairs(petUIDs) do
             if not petToTarget[uid] then
@@ -196,22 +206,21 @@ local ok, mainErr = pcall(function()
         end
         if #freePets == 0 then return end
 
-        local available = GetAvailableBreakablesInArea(coins)
-        if #available == 0 then return end
+        local avail = GetAvailableBreakablesForArea(coins)
+        if #avail == 0 then return end
 
-        local maxPerCycle = safeMode and MAX_ASSIGN_PER_CYCLE_SAFE or MAX_ASSIGN_PER_CYCLE
-        local count = math.min(maxPerCycle, #freePets, #available)
-        for i=1,count do
+        local count = math.min(#freePets, #avail)
+        for i=1, count do
             local pet = freePets[i]
-            local target = available[i]
+            local target = avail[i]
             if pet and target and target.id then
-                pcall(function() AssignPetToBreakable(pet, target.id, safeMode) end)
-                task.wait(safeMode and (0.12 + math.random(0,120)/1000) or (0.02 + math.random(0,40)/1000))
+                pcall(function() AssignPetToBreakable(pet, target.id, false) end)
+                task.wait(SAFE_DELAY_BETWEEN_ASSIGN)
             end
         end
     end
 
-    local function FillAssignments_Blatant(coins)
+    local function FillAssignmentsSafe(coins)
         local petUIDs = pickTopNFromSave()
         if #petUIDs == 0 then return end
         local freePets = {}
@@ -222,17 +231,37 @@ local ok, mainErr = pcall(function()
             end
         end
         if #freePets == 0 then return end
-        local available = GetAvailableBreakablesInArea(coins)
-        if #available == 0 then return end
+        local avail = GetAvailableBreakablesForArea(coins)
+        if #avail == 0 then return end
+        local count = math.min(#freePets, #avail, 2)
+        for i=1, count do
+            local pet = freePets[i]
+            local target = avail[i]
+            if pet and target and target.id then
+                pcall(function() AssignPetToBreakable(pet, target.id, true) end)
+                task.wait(0.3 + math.random(0,300)/1000)
+            end
+        end
+    end
 
-        local iPet, iAvail = 1,1
-        while iPet <= #freePets and iAvail <= #available do
-            local pet = freePets[iPet]; local target = available[iAvail]
-            if pet and target and target.id and not blatantlyAssignedTargets[target.id] then
-                pcall(function()
-                    AssignPetToBreakable(pet, target.id, false)
-                    blatantlyAssignedTargets[target.id] = true
-                end)
+    local function FillAssignmentsBlatant(coins)
+        local petUIDs = pickTopNFromSave()
+        if #petUIDs == 0 then return end
+        local freePets = {}
+        for _, uid in ipairs(petUIDs) do
+            if not petToTarget[uid] then
+                local cd = petCooldowns[uid] or 0
+                if tick() >= cd then table.insert(freePets, uid) end
+            end
+        end
+        if #freePets == 0 then return end
+        local avail = GetAvailableBreakablesForArea(coins)
+        if #avail == 0 then return end
+        local iPet, iAvail = 1, 1
+        while iPet <= #freePets and iAvail <= #avail do
+            local pet = freePets[iPet]; local target = avail[iAvail]
+            if pet and target and target.id then
+                pcall(function() AssignPetToBreakable(pet, target.id, false) end)
                 iPet = iPet + 1; iAvail = iAvail + 1
                 task.wait(0.01)
             else
@@ -241,18 +270,7 @@ local ok, mainErr = pcall(function()
         end
     end
 
-    local function matchesTargetType(targetType, coinData)
-        if not targetType or targetType == "Any" then return true end
-        if not coinData then return false end
-        local name = tostring(coinData.n or coinData.name or ""):lower()
-        if targetType == "Coins" then return name:find("coin") or name:find("coins") end
-        if targetType == "Diamonds" then return name:find("diamond") or name:find("gem") or name:find("ruby") end
-        if targetType == "Chests" then return name:find("chest") or name:find("crate") or name:find("vault") end
-        if targetType == "Breakables" then return not (name:find("orb") or name=="") end
-        return true
-    end
-
-    local function TargetNearest_All(coins)
+    local function TargetNearestAll(coins)
         if not coins then return end
         if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
         local hrp = LocalPlayer.Character.HumanoidRootPart
@@ -283,365 +301,445 @@ local ok, mainErr = pcall(function()
         end
     end
 
-    ----------------- RAYFIELD LOADER (robust) -----------------
-    local Rayfield = nil
-    local function try_load_rayfield_from(url)
-        local ok, src = pcall(function() return game:HttpGet(url) end)
-        if not ok or not src or #tostring(src) < 20 then return false end
-        -- try loadstring or load variants
-        local loaderFunc = loadstring or load
-        if not loaderFunc and getgenv and getgenv().loadstring then loaderFunc = getgenv().loadstring end
-        if not loaderFunc then return false end
-        local ok2, compiled = pcall(function() return loaderFunc(src) end)
-        if not ok2 or type(compiled) ~= "function" then return false end
-        local ok3, result = pcall(function() return compiled() end)
-        if not ok3 or type(result) ~= "table" then return false end
-        Rayfield = result
-        return true
+    -- ======= GUI HELPERS (small, clean, black) =======
+    local function makeDropdown(parent, posX, posY, width, labelText, options, onSelect)
+        options = options or {}
+        local label = Instance.new("TextLabel", parent)
+        label.Size = UDim2.new(0, width, 0, 14)
+        label.Position = UDim2.new(0, posX, 0, posY)
+        label.BackgroundTransparency = 1
+        label.Text = labelText
+        label.TextColor3 = Color3.new(1,1,1)
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 12
+
+        local btn = Instance.new("TextButton", parent)
+        btn.Size = UDim2.new(0, width, 0, 22)
+        btn.Position = UDim2.new(0, posX, 0, posY + 14)
+        btn.Text = options[1] or "None"
+        btn.Font = Enum.Font.SourceSans
+        btn.TextSize = 12
+        btn.TextColor3 = Color3.new(1,1,1)
+        btn.BackgroundColor3 = Color3.fromRGB(20,20,20)
+        btn.AutoButtonColor = true
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
+
+        local menu = Instance.new("Frame", parent)
+        menu.Size = UDim2.new(0, width, 0, math.min(#options*20, 200))
+        menu.Position = UDim2.new(0, posX, 0, posY + 36)
+        menu.Visible = false
+        menu.BackgroundColor3 = Color3.fromRGB(12,12,12)
+        Instance.new("UICorner", menu).CornerRadius = UDim.new(0,6)
+        local layout = Instance.new("UIListLayout", menu)
+        layout.Padding = UDim.new(0,4)
+
+        local function populate(opts)
+            for _, c in ipairs(menu:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
+            for _, opt in ipairs(opts) do
+                local optBtn = Instance.new("TextButton", menu)
+                optBtn.Size = UDim2.new(1, -8, 0, 18)
+                optBtn.Position = UDim2.new(0,4,0,0)
+                optBtn.Text = opt
+                optBtn.BackgroundTransparency = 1
+                optBtn.Font = Enum.Font.SourceSans
+                optBtn.TextColor3 = Color3.new(1,1,1)
+                optBtn.TextSize = 12
+                optBtn.AutoButtonColor = true
+                optBtn.MouseButton1Click:Connect(function()
+                    btn.Text = opt
+                    menu.Visible = false
+                    onSelect(opt)
+                end)
+            end
+            menu.Size = UDim2.new(0, width, 0, math.min(#opts*22, 200))
+        end
+
+        populate(options)
+
+        btn.MouseButton1Click:Connect(function()
+            menu.Visible = not menu.Visible
+        end)
+
+        return {
+            Button = btn,
+            Menu = menu,
+            Label = label,
+            SetOptions = function(newOptions) populate(newOptions) end
+        }
     end
 
-    -- try popular URLs (order matters for compatibility)
-    local tryUrls = {
-        "https://raw.githubusercontent.com/Exunys/Rayfield/main/source.lua",
-        "https://raw.githubusercontent.com/shlexware/Rayfield/main/source.lua",
-        "https://sirius.menu/rayfield",
-        "https://raw.githubusercontent.com/Entropy-Team/Rayfield/main/source.lua"
-    }
-    for _, url in ipairs(tryUrls) do
-        local ok = pcall(try_load_rayfield_from, url)
-        if ok and Rayfield then break end
-    end
+    -- ======= GUI (top-left, black, minimize 20x20) =======
+    local function CreateGUI()
+        local screenGui = Instance.new("ScreenGui")
+        screenGui.Name = "Hate_AutoFarm_GUI"
+        screenGui.ResetOnSpawn = false
+        screenGui.Parent = PlayerGui
 
-    if not Rayfield then
-        warn("[Hate AutoFarm] Rayfield loader failed - GUI will not be created. Script will continue headless.")
-    end
-
-    ----------------- BUILD UI (if Rayfield loaded) -----------------
-    local UI = {}
-    local areaDropdownObj, worldDropdownObj, targetTypeDropdownObj, eggDropdownObj
-    local toggleObjects = {}
-    local TabAF, TabTarget, TabStatus, TabExtras
-
-    if Rayfield then
-        local Window = Rayfield:CreateWindow({
-            Name = "Hate's Quality of Life",
-            LoadingTitle = "Hate's QOL",
-            LoadingSubtitle = "Autofarm",
-            ConfigurationSaving = {Enabled = true, FolderName = "HateQOL", FileName = "config"},
-            KeySystem = false
-        })
-
-        TabAF = Window:CreateTab("Autofarm")
-        TabTarget = Window:CreateTab("Targeting")
-        TabStatus = Window:CreateTab("Status")
-        TabExtras = Window:CreateTab("Extras")
-
-        -- Autofarm toggles (mutually exclusive)
-        local tStart = TabAF:CreateToggle({Name="Auto Farm (Normal)", CurrentValue=false, Flag="auto_normal", Callback=function(val)
-            if val then
-                SafeEnabled = false; BlatantEnabled = false
-                pcall(function() toggleObjects.safe:Set(false) end)
-                pcall(function() toggleObjects.blatant:Set(false) end)
-            end
-            Enabled = val
-        end})
-        toggleObjects.normal = tStart
-
-        local tSafe = TabAF:CreateToggle({Name="Safe Mode", CurrentValue=false, Flag="auto_safe", Callback=function(val)
-            if val then
-                Enabled = false; BlatantEnabled = false
-                pcall(function() toggleObjects.normal:Set(false) end)
-                pcall(function() toggleObjects.blatant:Set(false) end)
-            end
-            SafeEnabled = val
-        end})
-        toggleObjects.safe = tSafe
-
-        local tBlatant = TabAF:CreateToggle({Name="Blatant Mode", CurrentValue=false, Flag="auto_blatant", Callback=function(val)
-            if val then
-                Enabled = false; SafeEnabled = false
-                pcall(function() toggleObjects.normal:Set(false) end)
-                pcall(function() toggleObjects.safe:Set(false) end)
-            end
-            BlatantEnabled = val
-        end})
-        toggleObjects.blatant = tBlatant
-
-        TabAF:CreateButton({Name="Pick & Equip Best", Callback=function()
-            local chosen = pickTopNFromSave()
-            if #chosen == 0 then Rayfield:Notify({Title="Equip", Content="No pets found.", Duration=3}) return end
-            trackedPets = chosen
-            for _, uid in ipairs(trackedPets) do pcall(function() EquipPet(uid) end); task.wait(0.06) end
-            task.wait(EQUIP_WAIT)
-            Rayfield:Notify({Title="Equip", Content=("Equipped %d pets"):format(#trackedPets), Duration=2})
-        end})
-
-        TabAF:CreateButton({Name="Stop All", Callback=function()
-            Enabled = false; SafeEnabled = false; BlatantEnabled = false; NearestEnabled = false
-            pcall(function() toggleObjects.normal:Set(false) end)
-            pcall(function() toggleObjects.safe:Set(false) end)
-            pcall(function() toggleObjects.blatant:Set(false) end)
-            pcall(function() toggleObjects.nearest:Set(false) end)
-            petToTarget = {}; targetToPet = {}; petCooldowns = {}; blatantlyAssignedTargets = {}
-            Rayfield:Notify({Title="Stop", Content="All modes stopped", Duration=2})
-        end})
-
-        -- Target Nearest section in targeting tab
-        local tNearest = TabTarget:CreateToggle({Name="Target Nearest (All Pets)", CurrentValue=false, Flag="target_nearest", Callback=function(val)
-            if val then
-                Enabled, SafeEnabled, BlatantEnabled = false, false, false
-                pcall(function() toggleObjects.normal:Set(false) end)
-                pcall(function() toggleObjects.safe:Set(false) end)
-                pcall(function() toggleObjects.blatant:Set(false) end)
-            end
-            NearestEnabled = val
-        end})
-        toggleObjects.nearest = tNearest
-
-        targetTypeDropdownObj = TabTarget:CreateDropdown({Name="Target Type", Options=TargetTypeOptions, CurrentOption="Any", Flag="target_type", Callback=function(opt)
-            TargetNearestType = opt
-        end})
-
-        -- World / Area dynamic dropdowns (Targeting tab)
-        worldDropdownObj = TabTarget:CreateDropdown({
-            Name = "World",
-            Options = (function() local t={} for k,_ in pairs(WorldsTable) do table.insert(t,k) end; table.sort(t); return t end)(),
-            CurrentOption = SelectedWorld,
-            Flag = "world_select",
-            Callback = function(opt)
-                SelectedWorld = opt or SelectedWorld
-                local areas = WorldsTable[SelectedWorld] or {}
-                local current = areas[1] or ""
-                pcall(function()
-                    if areaDropdownObj and areaDropdownObj.Set then
-                        areaDropdownObj:Set({Options = areas, CurrentOption = current})
-                    else
-                        TabTarget.Flags["area_select"] = current
+        local frame = Instance.new("Frame", screenGui)
+        frame.Size = UDim2.new(0, 360, 0, 220)
+        frame.Position = UDim2.new(0, 10, 0, 36) -- fixed top-left below Roblox top bar
+        frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
+        Instance.new("UICorner", frame).CornerRadius = UDim.new(0,6)
+        frame.Active = true -- for mobile interactions
+        -- draggable (user asked to keep draggable earlier and mobile friendly)
+        local dragging, dragInput, dragStart, startPos
+        frame.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
+                dragging = true
+                dragStart = input.Position
+                startPos = frame.Position
+                input.Changed:Connect(function()
+                    if input.UserInputState == Enum.UserInputState.End then
+                        dragging = false
                     end
                 end)
-                SelectedArea = current
-                -- clear assignments so pets retarget into new area
-                petToTarget = {}; targetToPet = {}; petCooldowns = {}
-            end
-        })
-
-        areaDropdownObj = TabTarget:CreateDropdown({
-            Name = "Area",
-            Options = (WorldsTable[SelectedWorld] or {}),
-            CurrentOption = SelectedArea,
-            Flag = "area_select",
-            Callback = function(opt)
-                SelectedArea = opt or SelectedArea
-                petToTarget = {}; targetToPet = {}; petCooldowns = {}
-            end
-        })
-
-        -- Status tab
-        local statusLabel = TabStatus:CreateLabel(("Status: Idle\nMode: None\nWorld/Area: %s - %s\nPets Equipped: 0"):format(tostring(SelectedWorld), tostring(SelectedArea)))
-        UI.StatusLabel = statusLabel
-
-        -- Extras tab: placeholders + auto hatch
-        TabExtras:CreateSection("Auto Upgrade (placeholders)")
-        TabExtras:CreateLabel("Auto Fuse (placeholder)")
-        TabExtras:CreateLabel("Auto Gold (placeholder)")
-        TabExtras:CreateLabel("Auto Rainbow (placeholder)")
-        TabExtras:CreateLabel("Auto Dark Matter (placeholder)")
-
-        TabExtras:CreateSection("Auto Hatch (Eggs)")
-        eggDropdownObj = TabExtras:CreateDropdown({Name="Egg Type", Options={"Refresh to load"}, CurrentOption="", Flag="egg_select", Callback=function(opt) end})
-        TabExtras:CreateButton({Name="Refresh Egg List", Callback=function()
-            local list = {}
-            local eggsRoot = ReplicatedStorage:FindFirstChild("Eggs") or ReplicatedStorage
-            if eggsRoot then
-                for _,child in ipairs(eggsRoot:GetChildren()) do
-                    if child.Name and #tostring(child.Name)>0 then table.insert(list, child.Name) end
-                end
-            end
-            if #list == 0 then table.insert(list, "Starter Egg"); table.insert(list, "Valentines Egg") end
-            pcall(function() if eggDropdownObj and eggDropdownObj.Set then eggDropdownObj:Set({Options = list, CurrentOption = list[1]}) end end)
-            Rayfield:Notify({Title="Egg List", Content=("Loaded %d entries"):format(#list), Duration=2})
-        end})
-        local eggAmountBox = TabExtras:CreateTextBox({Name="Amount to Open", Value="1", Flag="egg_amount", Callback=function(val end})
-        local tEggToggle = TabExtras:CreateToggle({Name="Start Auto Hatch", CurrentValue=false, Flag="auto_hatch", Callback=function(val end})
-
-        -- hotkey to toggle Rayfield window
-        Window:CreateKeybind({Name="Toggle UI (RightControl)", CurrentKeybind=Enum.KeyCode.RightControl, HoldToInteract=false, Callback=function() pcall(function() Window:Toggle() end) end})
-
-        -- store references
-        UI.Window = Window
-        UI.Rayfield = Rayfield
-        UI.WorldDropdown = worldDropdownObj
-        UI.AreaDropdown = areaDropdownObj
-        UI.TargetDropdown = targetTypeDropdownObj
-        UI.EggDropdown = eggDropdownObj
-        UI.ToggleObjects = toggleObjects
-    end -- if Rayfield
-
-    ----------------- Mobile restore button (always visible when minimized) -----------------
-    local restoreGui = Instance.new("ScreenGui")
-    restoreGui.Name = "HateRestoreGui"
-    restoreGui.ResetOnSpawn = false
-    restoreGui.Parent = PlayerGui
-
-    local restoreBtn = Instance.new("TextButton")
-    restoreBtn.Size = UDim2.new(0, 34, 0, 34)
-    restoreBtn.Position = UDim2.new(0, 6, 0, 42)
-    restoreBtn.AnchorPoint = Vector2.new(0,0)
-    restoreBtn.Text = "H"
-    restoreBtn.Font = Enum.Font.SourceSansBold
-    restoreBtn.TextSize = 18
-    restoreBtn.BackgroundColor3 = Color3.fromRGB(10,10,10)
-    restoreBtn.TextColor3 = Color3.new(1,1,1)
-    restoreBtn.Name = "HateRestoreBtn"
-    restoreBtn.Parent = restoreGui
-    restoreBtn.AutoButtonColor = true
-
-    -- draggable restoreBtn (small)
-    do
-        local dragging, dragInput, dragStart, startPos
-        restoreBtn.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = true; dragStart = input.Position; startPos = restoreBtn.Position
-                input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
             end
         end)
-        restoreBtn.InputChanged:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseMovement then dragInput = input end end)
+        frame.InputChanged:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+                dragInput = input
+            end
+        end)
         UserInputService.InputChanged:Connect(function(input)
             if input == dragInput and dragging and dragStart and startPos then
                 local delta = input.Position - dragStart
-                restoreBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
             end
         end)
+
+        -- Minimize button top-right (20x20)
+        local minBtn = Instance.new("TextButton", frame)
+        minBtn.Size = UDim2.new(0, 20, 0, 20)
+        minBtn.Position = UDim2.new(1, -26, 0, 6)
+        minBtn.Text = "▢"
+        minBtn.Font = Enum.Font.SourceSansBold
+        minBtn.TextSize = 14
+        minBtn.BackgroundColor3 = Color3.fromRGB(28,28,28)
+        minBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0,4)
+
+        local title = Instance.new("TextLabel", frame)
+        title.Size = UDim2.new(1, -52, 0, 24)
+        title.Position = UDim2.new(0, 10, 0, 6)
+        title.BackgroundTransparency = 1
+        title.Font = Enum.Font.SourceSansBold
+        title.TextSize = 14
+        title.TextColor3 = Color3.new(1,1,1)
+        title.Text = "Hate's Autofarm"
+
+        -- Buttons top row
+        local pickBtn = Instance.new("TextButton", frame)
+        pickBtn.Size = UDim2.new(0.48, -8, 0, 34)
+        pickBtn.Position = UDim2.new(0, 10, 0, 36)
+        pickBtn.Text = "Pick Best Pets"
+        pickBtn.Font = Enum.Font.SourceSansBold
+        pickBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
+        pickBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", pickBtn).CornerRadius = UDim.new(0,6)
+
+        local startBtn = Instance.new("TextButton", frame)
+        startBtn.Size = UDim2.new(0.48, -8, 0, 34)
+        startBtn.Position = UDim2.new(0, 186, 0, 36)
+        startBtn.Text = "Start"
+        startBtn.Font = Enum.Font.SourceSansBold
+        startBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
+        startBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
+
+        -- Mode buttons (small)
+        local normalBtn = Instance.new("TextButton", frame)
+        normalBtn.Size = UDim2.new(0.30, -6, 0, 22)
+        normalBtn.Position = UDim2.new(0, 10, 0, 78)
+        normalBtn.Text = "Normal"
+        normalBtn.Font = Enum.Font.SourceSans
+        normalBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
+        normalBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", normalBtn).CornerRadius = UDim.new(0,6)
+
+        local safeBtn = Instance.new("TextButton", frame)
+        safeBtn.Size = UDim2.new(0.30, -6, 0, 22)
+        safeBtn.Position = UDim2.new(0, 126, 0, 78)
+        safeBtn.Text = "Safe"
+        safeBtn.Font = Enum.Font.SourceSans
+        safeBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
+        safeBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", safeBtn).CornerRadius = UDim.new(0,6)
+
+        local blatBtn = Instance.new("TextButton", frame)
+        blatBtn.Size = UDim2.new(0.30, -6, 0, 22)
+        blatBtn.Position = UDim2.new(0, 242, 0, 78)
+        blatBtn.Text = "Blatant"
+        blatBtn.Font = Enum.Font.SourceSans
+        blatBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
+        blatBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", blatBtn).CornerRadius = UDim.new(0,6)
+
+        -- Target Nearest
+        local nearestBtn = Instance.new("TextButton", frame)
+        nearestBtn.Size = UDim2.new(0.96, -16, 0, 26)
+        nearestBtn.Position = UDim2.new(0, 10, 0, 108)
+        nearestBtn.Text = "Target Nearest (All Pets)"
+        nearestBtn.Font = Enum.Font.SourceSans
+        nearestBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
+        nearestBtn.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", nearestBtn).CornerRadius = UDim.new(0,6)
+
+        -- Dropdowns area (5px below the buttons)
+        local dropdownY = 142
+
+        local worldDropdown = nil
+        local areaDropdown = nil
+        local targetDropdown = nil
+
+        worldDropdown = makeDropdown(frame, 10, dropdownY, 160, "World", (function()
+            local t = {}
+            for k,_ in pairs(WorldsTable) do table.insert(t, k) end
+            table.sort(t)
+            return t
+        end)(), function(selected)
+            SelectedWorld = selected or SelectedWorld
+            local areas = WorldsTable[SelectedWorld] or {}
+            if areaDropdown then
+                areaDropdown.SetOptions(areas)
+                if #areas > 0 then
+                    SelectedArea = areas[1]
+                    areaDropdown.Button.Text = areas[1]
+                else
+                    SelectedArea = ""
+                    areaDropdown.Button.Text = "None"
+                end
+            end
+            petToTarget = {}
+            targetToPet = {}
+            petCooldowns = {}
+        end)
+
+        areaDropdown = makeDropdown(frame, 184, dropdownY, 160, "Area", WorldsTable[SelectedWorld] or {}, function(selected)
+            SelectedArea = selected or SelectedArea
+            petToTarget = {}
+            targetToPet = {}
+            petCooldowns = {}
+        end)
+
+        targetDropdown = makeDropdown(frame, 10, dropdownY + 56, 160, "Target Type", TargetTypeOptions, function(selected)
+            TargetNearestType = selected or TargetNearestType
+        end)
+
+        -- Egg animation remove toggle & auto-hatch placeholders
+        local eggToggle = Instance.new("TextButton", frame)
+        eggToggle.Size = UDim2.new(0.48, -8, 0, 26)
+        eggToggle.Position = UDim2.new(0, 184, 0, dropdownY + 56)
+        eggToggle.Text = "Egg Anim: OFF"
+        eggToggle.Font = Enum.Font.SourceSans
+        eggToggle.BackgroundColor3 = Color3.fromRGB(18,18,18)
+        eggToggle.TextColor3 = Color3.new(1,1,1)
+        Instance.new("UICorner", eggToggle).CornerRadius = UDim.new(0,6)
+        local eggAnimDisabled = false
+
+        -- Placeholders for Auto Fuse/Gold/Rainbow/DarkMatter/Hatch sections (empty for now)
+        local placeholderLabel = Instance.new("TextLabel", frame)
+        placeholderLabel.Size = UDim2.new(1, -20, 0, 18)
+        placeholderLabel.Position = UDim2.new(0, 10, 0, 188)
+        placeholderLabel.BackgroundTransparency = 1
+        placeholderLabel.Font = Enum.Font.SourceSans
+        placeholderLabel.TextSize = 12
+        placeholderLabel.TextColor3 = Color3.new(1,1,1)
+        placeholderLabel.Text = "Placeholders: Auto Fuse | Gold | Rainbow | DarkMatter | Auto Hatch (configure later)"
+
+        -- Status label
+        local statusLabel = Instance.new("TextLabel", frame)
+        statusLabel.Size = UDim2.new(1, -20, 0, 18)
+        statusLabel.Position = UDim2.new(0, 10, 0, 206)
+        statusLabel.BackgroundTransparency = 1
+        statusLabel.Font = Enum.Font.SourceSans
+        statusLabel.TextSize = 12
+        statusLabel.TextColor3 = Color3.new(1,1,1)
+        statusLabel.Text = ("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets)
+
+        -- Restore small button (always visible when minimized)
+        local restoreBtn = Instance.new("TextButton", PlayerGui)
+        restoreBtn.Name = "HateRestore"
+        restoreBtn.Size = UDim2.new(0, 28, 0, 28)
+        restoreBtn.Position = UDim2.new(0, 10, 0, 36)
+        restoreBtn.Text = "H"
+        restoreBtn.Font = Enum.Font.SourceSansBold
+        restoreBtn.TextSize = 14
+        restoreBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
+        restoreBtn.TextColor3 = Color3.new(1,1,1)
+        restoreBtn.Visible = false
+        Instance.new("UICorner", restoreBtn).CornerRadius = UDim.new(0,6)
+
+        -- toggle egg animation remover
+        eggToggle.MouseButton1Click:Connect(function()
+            eggAnimDisabled = not eggAnimDisabled
+            eggToggle.Text = eggAnimDisabled and "Egg Anim: ON (Disabled)" or "Egg Anim: OFF"
+            if eggAnimDisabled then
+                -- best-effort: hook common OpenEgg function via getgc (not guaranteed on all exploits)
+                pcall(function()
+                    for i,v in pairs(getgc and getgc(true) or {}) do
+                        if type(v) == "table" and rawget(v, "OpenEgg") then
+                            -- backup if not present
+                            if not rawget(v, "_OpenEgg_backup") then v._OpenEgg_backup = v.OpenEgg end
+                            v.OpenEgg = function() return end
+                        elseif type(v) == "function" then
+                            -- some games keep functions directly; try to find by name (best-effort)
+                        end
+                    end
+                end)
+            else
+                pcall(function()
+                    for i,v in pairs(getgc and getgc(true) or {}) do
+                        if type(v) == "table" and rawget(v, "_OpenEgg_backup") then
+                            v.OpenEgg = v._OpenEgg_backup
+                            v._OpenEgg_backup = nil
+                        end
+                    end
+                end)
+            end
+        end)
+
+        -- ===== button behaviors & mode toggle helper =====
+        local function setMode(newMode)
+            Mode = newMode or "None"
+            -- visual update
+            normalBtn.BackgroundColor3 = (Mode == "Normal") and Color3.fromRGB(48,48,48) or Color3.fromRGB(18,18,18)
+            safeBtn.BackgroundColor3   = (Mode == "Safe") and Color3.fromRGB(48,48,48) or Color3.fromRGB(18,18,18)
+            blatBtn.BackgroundColor3   = (Mode == "Blatant") and Color3.fromRGB(48,48,48) or Color3.fromRGB(18,18,18)
+            nearestBtn.BackgroundColor3= (Mode == "Nearest") and Color3.fromRGB(48,48,48) or Color3.fromRGB(18,18,18)
+            statusLabel.Text = ("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets)
+            petToTarget = {}
+            targetToPet = {}
+            petCooldowns = {}
+        end
+
+        pickBtn.MouseButton1Click:Connect(function()
+            statusLabel.Text = "Equipping best pets..."
+            local chosen = pickTopNFromSave()
+            if #chosen == 0 then
+                statusLabel.Text = "No pets found."
+                return
+            end
+            trackedPets = chosen
+            for _, uid in ipairs(trackedPets) do
+                local ok, res = EquipPet(uid)
+                if not ok then warn("[Hate AutoFarm] EquipPet failed for", uid, res) end
+                task.wait(0.06)
+            end
+            task.wait(EQUIP_WAIT)
+            statusLabel.Text = ("Equipped %d pets"):format(#trackedPets)
+        end)
+
+        startBtn.MouseButton1Click:Connect(function()
+            if Mode == "None" then setMode("Normal") else setMode("None") end
+        end)
+
+        normalBtn.MouseButton1Click:Connect(function() if Mode ~= "Normal" then setMode("Normal") else setMode("None") end end)
+        safeBtn.MouseButton1Click:Connect(function() if Mode ~= "Safe" then setMode("Safe") else setMode("None") end end)
+        blatBtn.MouseButton1Click:Connect(function() if Mode ~= "Blatant" then setMode("Blatant") else setMode("None") end end)
+        nearestBtn.MouseButton1Click:Connect(function() if Mode ~= "Nearest" then setMode("Nearest") else setMode("None") end end)
+
+        minBtn.MouseButton1Click:Connect(function()
+            frame.Visible = false
+            restoreBtn.Visible = true
+        end)
+
+        restoreBtn.MouseButton1Click:Connect(function()
+            frame.Visible = true
+            restoreBtn.Visible = false
+        end)
+
+        -- return GUI handles
+        return {
+            Gui = screenGui,
+            Frame = frame,
+            StatusLabel = statusLabel,
+            WorldDropdown = worldDropdown,
+            AreaDropdown = areaDropdown,
+            TargetDropdown = targetDropdown,
+            SetMode = setMode
+        }
     end
 
-    restoreBtn.MouseButton1Click:Connect(function()
-        if UI and UI.Window and UI.Window.Toggle then pcall(function() UI.Window:Toggle() end) else print("[Hate AutoFarm] Rayfield window toggle not available") end
+    local ui = CreateGUI()
+
+    -- ======= ANTI-AFK (run once) =======
+    pcall(function()
+        local vu = game:GetService("VirtualUser")
+        Players.LocalPlayer.Idled:Connect(function()
+            vu:Button2Down(Vector2.new(0,0), workspace.CurrentCamera)
+            task.wait(1)
+            vu:Button2Up(Vector2.new(0,0), workspace.CurrentCamera)
+        end)
     end)
 
-    ----------------- ANTI-AFK (non-evasive) -----------------
-    do
-        local vu = nil
-        pcall(function() vu = game:GetService("VirtualUser") end)
-        if vu then
-            Players.LocalPlayer.Idled:Connect(function()
-                vu:Button2Down(Vector2.new(0,0)); task.wait(0.1); vu:Button2Up(Vector2.new(0,0))
-            end)
-        else
-            Players.LocalPlayer.Idled:Connect(function()
-                pcall(function()
-                    local uis = game:GetService("UserInputService")
-                    uis.MouseIconEnabled = not uis.MouseIconEnabled
-                    task.wait(0.05)
-                    uis.MouseIconEnabled = not uis.MouseIconEnabled
-                end)
-            end)
-        end
-    end
-
-    ----------------- BACKGROUND LOOP -----------------
+    -- ======= MAIN BACKGROUND LOOP =======
     task.spawn(function()
         while true do
-            -- update status label (Rayfield)
-            pcall(function()
-                if UI and UI.StatusLabel then
-                    local mode = "None"
-                    if Enabled then mode = "Normal" elseif SafeEnabled then mode = "Safe" elseif BlatantEnabled then mode = "Blatant" elseif NearestEnabled then mode = "Nearest" end
-                    local petsCount = #trackedPets
-                    UI.StatusLabel:SetText(("Status: %s\nMode: %s\nWorld/Area: %s - %s\nPets Equipped: %d"):format( (Enabled or SafeEnabled or BlatantEnabled or NearestEnabled) and "Farming" or "Idle", mode, tostring(SelectedWorld), tostring(SelectedArea), petsCount ) )
-                end
-            end)
+            -- update live status
+            if ui and ui.StatusLabel then
+                ui.StatusLabel.Text = ("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets)
+            end
 
-            -- if Nearest enabled, pause other modes and run nearest
-            if NearestEnabled then
+            local coins = nil
+            if Mode ~= "None" then coins = GetCoinsRaw() or {} end
+
+            if Mode == "Nearest" then
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
                     for _, uid in ipairs(trackedPets) do pcall(function() EquipPet(uid) end); task.wait(0.06) end
                     task.wait(EQUIP_WAIT)
                 end
-                local coins = GetCoinsRaw()
-                if coins then FreeStaleAssignments(coins) end
-                if coins then TargetNearest_All(coins) end
-                pcall(function() ClaimOrbs({}) end)
+                if coins then
+                    FreeStaleAssignments(coins)
+                    TargetNearestAll(coins)
+                    pcall(function() ClaimOrbs({}) end)
+                end
                 task.wait(0.45 + math.random(0,200)/1000)
-                continue
-            end
-
-            -- Normal mode
-            if Enabled then
+            elseif Mode == "Normal" then
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
                     for _, uid in ipairs(trackedPets) do pcall(function() EquipPet(uid) end); task.wait(0.06) end
                     task.wait(EQUIP_WAIT)
                 end
-                local coins = GetCoinsRaw()
                 if coins then
                     FreeStaleAssignments(coins)
-                    FillAssignments_NormalOrSafe(coins, false)
+                    FillAssignmentsNormal(coins)
                     pcall(function() ClaimOrbs({}) end)
                 end
-            end
-
-            -- Safe mode
-            if SafeEnabled then
+                task.wait(MAIN_LOOP_DELAY)
+            elseif Mode == "Safe" then
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
-                    for _, uid in ipairs(trackedPets) do pcall(function() EquipPet(uid) end); task.wait(0.09 + math.random(0,80)/1000) end
-                    task.wait(EQUIP_WAIT + 0.1)
+                    for _, uid in ipairs(trackedPets) do pcall(function() EquipPet(uid) end); task.wait(0.09 + math.random(0,100)/1000) end
+                    task.wait(EQUIP_WAIT)
                 end
-                local coins = GetCoinsRaw()
                 if coins then
                     FreeStaleAssignments(coins)
-                    FillAssignments_NormalOrSafe(coins, true)
+                    FillAssignmentsSafe(coins)
                     pcall(function() ClaimOrbs({}) end)
                 end
-                task.wait(SAFE_LOOP_DELAY + math.random(0,200)/1000)
-            end
-
-            -- Blatant mode
-            if BlatantEnabled then
+                task.wait(MAIN_LOOP_DELAY + SAFE_EXTRA_DELAY + math.random(0,300)/1000)
+            elseif Mode == "Blatant" then
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
                     for _, uid in ipairs(trackedPets) do pcall(function() EquipPet(uid) end); task.wait(0.04) end
                     task.wait(EQUIP_WAIT)
                 end
-                local coins = GetCoinsRaw()
                 if coins then
                     FreeStaleAssignments(coins)
-                    FillAssignments_Blatant(coins)
+                    FillAssignmentsBlatant(coins)
                     pcall(function() ClaimOrbs({}) end)
                 end
-                task.wait(0.30 + math.random(0,200)/1000)
+                task.wait(0.25 + math.random(0,200)/1000)
+            else
+                task.wait(0.8)
             end
-
-            -- Auto Hatch runner (basic)
-            pcall(function()
-                if Rayfield and TabExtras and TabExtras.Flags and TabExtras.Flags["auto_hatch"] then
-                    local hatchOn = TabExtras.Flags["auto_hatch"]
-                    if hatchOn then
-                        local egg = TabExtras.Flags["egg_select"] or (eggDropdownObj and eggDropdownObj.Get and eggDropdownObj:Get())
-                        local amt = tonumber(TabExtras.Flags["egg_amount"]) or 1
-                        if egg and amt > 0 then
-                            local rem = Network and Network:FindFirstChild("Buy Egg")
-                            if rem and rem.ClassName == "RemoteFunction" then
-                                task.spawn(function()
-                                    for i=1, amt do
-                                        pcall(function() rem:InvokeServer(egg, false, true) end)
-                                        task.wait(0.25 + math.random(0,200)/1000)
-                                    end
-                                end)
-                            end
-                        end
-                    end
-                end
-            end)
-
-            task.wait(MAIN_LOOP_DELAY + math.random(0,200)/1000)
         end
     end)
 
-    print("[Hate AutoFarm] Script loaded. Rayfield UI created (if loader succeeded).")
+    print("[Hate AutoFarm] Full script loaded. GUI at top-left. Pick Best Pets -> Start to run.")
 
-end)
+end) -- end pcall
 
 if not ok then
     warn("[Hate AutoFarm] Startup error:", mainErr)
