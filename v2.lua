@@ -1,4 +1,4 @@
--- Hate's Quality of Life (Full) - Rayfield UI + Autofarm
+-- Hate's Quality of Life (Full) - Robust Rayfield loader + Autofarm
 -- Paste into a NEW LocalScript and run (LocalScript required)
 
 local ok, mainErr = pcall(function()
@@ -283,24 +283,44 @@ local ok, mainErr = pcall(function()
         end
     end
 
-    ----------------- RAYFIELD LOADER -----------------
+    ----------------- RAYFIELD LOADER (robust) -----------------
     local Rayfield = nil
-    local successLoad, resLoad = pcall(function()
-        return loadstring(game:HttpGet("https://sirius.menu/rayfield"))()
-    end)
-    if successLoad and type(resLoad) == "table" then Rayfield = resLoad end
-    if not Rayfield then
-        local ok2, res2 = pcall(function()
-            return loadstring(game:HttpGet("https://raw.githubusercontent.com/Exunys/Rayfield/main/source.lua"))()
-        end)
-        if ok2 and type(res2) == "table" then Rayfield = res2 end
+    local function try_load_rayfield_from(url)
+        local ok, src = pcall(function() return game:HttpGet(url) end)
+        if not ok or not src or #tostring(src) < 20 then return false end
+        -- try loadstring or load variants
+        local loaderFunc = loadstring or load
+        if not loaderFunc and getgenv and getgenv().loadstring then loaderFunc = getgenv().loadstring end
+        if not loaderFunc then return false end
+        local ok2, compiled = pcall(function() return loaderFunc(src) end)
+        if not ok2 or type(compiled) ~= "function" then return false end
+        local ok3, result = pcall(function() return compiled() end)
+        if not ok3 or type(result) ~= "table" then return false end
+        Rayfield = result
+        return true
     end
-    if not Rayfield then warn("[Hate AutoFarm] Rayfield loader failed - GUI won't be created") end
 
-    ----------------- BUILD UI -----------------
+    -- try popular URLs (order matters for compatibility)
+    local tryUrls = {
+        "https://raw.githubusercontent.com/Exunys/Rayfield/main/source.lua",
+        "https://raw.githubusercontent.com/shlexware/Rayfield/main/source.lua",
+        "https://sirius.menu/rayfield",
+        "https://raw.githubusercontent.com/Entropy-Team/Rayfield/main/source.lua"
+    }
+    for _, url in ipairs(tryUrls) do
+        local ok = pcall(try_load_rayfield_from, url)
+        if ok and Rayfield then break end
+    end
+
+    if not Rayfield then
+        warn("[Hate AutoFarm] Rayfield loader failed - GUI will not be created. Script will continue headless.")
+    end
+
+    ----------------- BUILD UI (if Rayfield loaded) -----------------
     local UI = {}
     local areaDropdownObj, worldDropdownObj, targetTypeDropdownObj, eggDropdownObj
     local toggleObjects = {}
+    local TabAF, TabTarget, TabStatus, TabExtras
 
     if Rayfield then
         local Window = Rayfield:CreateWindow({
@@ -311,16 +331,14 @@ local ok, mainErr = pcall(function()
             KeySystem = false
         })
 
-        -- tabs
-        local TabAF = Window:CreateTab("Autofarm")
-        local TabTarget = Window:CreateTab("Targeting")
-        local TabStatus = Window:CreateTab("Status")
-        local TabExtras = Window:CreateTab("Extras")
+        TabAF = Window:CreateTab("Autofarm")
+        TabTarget = Window:CreateTab("Targeting")
+        TabStatus = Window:CreateTab("Status")
+        TabExtras = Window:CreateTab("Extras")
 
         -- Autofarm toggles (mutually exclusive)
         local tStart = TabAF:CreateToggle({Name="Auto Farm (Normal)", CurrentValue=false, Flag="auto_normal", Callback=function(val)
             if val then
-                -- turn off others
                 SafeEnabled = false; BlatantEnabled = false
                 pcall(function() toggleObjects.safe:Set(false) end)
                 pcall(function() toggleObjects.blatant:Set(false) end)
@@ -371,7 +389,6 @@ local ok, mainErr = pcall(function()
         -- Target Nearest section in targeting tab
         local tNearest = TabTarget:CreateToggle({Name="Target Nearest (All Pets)", CurrentValue=false, Flag="target_nearest", Callback=function(val)
             if val then
-                -- pause other farm modes
                 Enabled, SafeEnabled, BlatantEnabled = false, false, false
                 pcall(function() toggleObjects.normal:Set(false) end)
                 pcall(function() toggleObjects.safe:Set(false) end)
@@ -393,20 +410,18 @@ local ok, mainErr = pcall(function()
             Flag = "world_select",
             Callback = function(opt)
                 SelectedWorld = opt or SelectedWorld
-                -- update area dropdown options dynamically
                 local areas = WorldsTable[SelectedWorld] or {}
                 local current = areas[1] or ""
                 pcall(function()
-                    -- Rayfield dropdown object should support Set or SetOptions
                     if areaDropdownObj and areaDropdownObj.Set then
                         areaDropdownObj:Set({Options = areas, CurrentOption = current})
-                    elseif areaDropdownObj and areaDropdownObj.UpdateOptions then
-                        areaDropdownObj:UpdateOptions(areas)
                     else
                         TabTarget.Flags["area_select"] = current
                     end
                 end)
                 SelectedArea = current
+                -- clear assignments so pets retarget into new area
+                petToTarget = {}; targetToPet = {}; petCooldowns = {}
             end
         })
 
@@ -417,7 +432,6 @@ local ok, mainErr = pcall(function()
             Flag = "area_select",
             Callback = function(opt)
                 SelectedArea = opt or SelectedArea
-                -- clear assignments so pets retarget into new area
                 petToTarget = {}; targetToPet = {}; petCooldowns = {}
             end
         })
@@ -436,9 +450,8 @@ local ok, mainErr = pcall(function()
         TabExtras:CreateSection("Auto Hatch (Eggs)")
         eggDropdownObj = TabExtras:CreateDropdown({Name="Egg Type", Options={"Refresh to load"}, CurrentOption="", Flag="egg_select", Callback=function(opt) end})
         TabExtras:CreateButton({Name="Refresh Egg List", Callback=function()
-            -- try to detect eggs in ReplicatedStorage or produce a default list
             local list = {}
-            local eggsRoot = ReplicatedStorage:FindFirstChild("Eggs") or ReplicatedStorage:FindFirstChild("EggsFolder") or ReplicatedStorage
+            local eggsRoot = ReplicatedStorage:FindFirstChild("Eggs") or ReplicatedStorage
             if eggsRoot then
                 for _,child in ipairs(eggsRoot:GetChildren()) do
                     if child.Name and #tostring(child.Name)>0 then table.insert(list, child.Name) end
@@ -449,9 +462,7 @@ local ok, mainErr = pcall(function()
             Rayfield:Notify({Title="Egg List", Content=("Loaded %d entries"):format(#list), Duration=2})
         end})
         local eggAmountBox = TabExtras:CreateTextBox({Name="Amount to Open", Value="1", Flag="egg_amount", Callback=function(val end})
-        local tEggToggle = TabExtras:CreateToggle({Name="Start Auto Hatch", CurrentValue=false, Flag="auto_hatch", Callback=function(val)
-            -- stub: toggle; actual hatch routine runs in background loop below if enabled
-        end})
+        local tEggToggle = TabExtras:CreateToggle({Name="Start Auto Hatch", CurrentValue=false, Flag="auto_hatch", Callback=function(val end})
 
         -- hotkey to toggle Rayfield window
         Window:CreateKeybind({Name="Toggle UI (RightControl)", CurrentKeybind=Enum.KeyCode.RightControl, HoldToInteract=false, Callback=function() pcall(function() Window:Toggle() end) end})
@@ -485,7 +496,7 @@ local ok, mainErr = pcall(function()
     restoreBtn.Parent = restoreGui
     restoreBtn.AutoButtonColor = true
 
-    -- draggable restoreBtn
+    -- draggable restoreBtn (small)
     do
         local dragging, dragInput, dragStart, startPos
         restoreBtn.InputBegan:Connect(function(input)
@@ -542,7 +553,6 @@ local ok, mainErr = pcall(function()
 
             -- if Nearest enabled, pause other modes and run nearest
             if NearestEnabled then
-                -- ensure pets equipped
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
                     for _, uid in ipairs(trackedPets) do pcall(function() EquipPet(uid) end); task.wait(0.06) end
@@ -603,20 +613,16 @@ local ok, mainErr = pcall(function()
                 task.wait(0.30 + math.random(0,200)/1000)
             end
 
-            -- Auto Hatch runner (simple)
-            -- if the toggle exists, find egg type and amount and call Buy Egg remote repeatedly (basic)
-            -- NOTE: This is a generic handler and may require adaptation to your game's remotes.
+            -- Auto Hatch runner (basic)
             pcall(function()
                 if Rayfield and TabExtras and TabExtras.Flags and TabExtras.Flags["auto_hatch"] then
                     local hatchOn = TabExtras.Flags["auto_hatch"]
                     if hatchOn then
-                        local egg = TabExtras.Flags["egg_select"] or (eggDropdownObj and eggDropdownObj:GetCurrentOption and eggDropdownObj:GetCurrentOption()) or nil
+                        local egg = TabExtras.Flags["egg_select"] or (eggDropdownObj and eggDropdownObj.Get and eggDropdownObj:Get())
                         local amt = tonumber(TabExtras.Flags["egg_amount"]) or 1
                         if egg and amt > 0 then
-                            -- try to find Buy Egg remote
                             local rem = Network and Network:FindFirstChild("Buy Egg")
                             if rem and rem.ClassName == "RemoteFunction" then
-                                -- spawn a small task so we don't lock the main loop
                                 task.spawn(function()
                                     for i=1, amt do
                                         pcall(function() rem:InvokeServer(egg, false, true) end)
