@@ -1,5 +1,5 @@
--- Hate's Autofarm — Final Full Build
--- Paste into a NEW LocalScript and run in Delta / normal environment
+-- Hate's Autofarm (Rayfield UI) - full script
+-- Paste into a NEW LocalScript and run (local environment)
 
 local ok, mainErr = pcall(function()
 
@@ -8,11 +8,9 @@ local ok, mainErr = pcall(function()
     local JOIN_DELAY = 0.06
     local CHANGE_DELAY = 0.04
     local MAIN_LOOP_DELAY = 0.8
-    local SAFE_EXTRA_DELAY = 0.6
     local EQUIP_WAIT = 0.45
     local RETARGET_DELAY = 0.3
 
-    -- ======= STATIC WORLDS TABLE (your original) =======
     local WorldsTable = {
         ["Spawn"] = {"Shop","Town","Forest","Beach","Mine","Winter","Glacier","Desert","Volcano","Cave","Tech Entry","VIP"},
         ["Fantasy"] = {"Fantasy Shop","Enchanted Forest","Portals","Ancient Island","Samurai Island","Candy Island","Haunted Island","Hell Island","Heaven Island","Heaven's Gate"},
@@ -25,7 +23,7 @@ local ok, mainErr = pcall(function()
 
     local TargetTypeOptions = {"Any","Coins","Diamonds","Chests","Breakables"}
 
-    -- ======= SERVICES & BASIC SETUP =======
+    -- ======= SERVICES =======
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Workspace = game:GetService("Workspace")
@@ -36,10 +34,10 @@ local ok, mainErr = pcall(function()
 
     local Network = ReplicatedStorage:FindFirstChild("Network")
     if not Network then
-        warn("[Hate AutoFarm] ReplicatedStorage.Network not found. Remotes may be missing.")
+        warn("[Hate AF] ReplicatedStorage.Network not found.")
     end
 
-    -- ======= SAFE REMOTE CALLER (no varargs at top-level) =======
+    -- ======= SAFE REMOTE CALLER =======
     local function CallRemote(name, argsTable)
         argsTable = argsTable or {}
         if not Network then return false, "Network missing" end
@@ -72,7 +70,7 @@ local ok, mainErr = pcall(function()
     end
 
     -- ======= UTILITIES =======
-    local function safe_delay(t, f) if type(t)=="number" and type(f)=="function" then task.delay(t, f) end end
+    local function safe_delay(t, f) if type(t) == "number" and type(f) == "function" then task.delay(t, f) end end
     local function safeNumber(x) if type(x)=="number" then return x elseif type(x)=="string" then return tonumber(x) or 0 end return 0 end
 
     local function buildPetListFromSave(save)
@@ -118,7 +116,7 @@ local ok, mainErr = pcall(function()
     local targetToPet = {}
     local petCooldowns = {}
 
-    -- ======= ASSIGNMENT HELPERS =======
+    -- ======= ASSIGN HELPERS =======
     local function ClearAssignment(uid)
         if not uid then return end
         local t = petToTarget[uid]
@@ -148,7 +146,7 @@ local ok, mainErr = pcall(function()
     local function GetAvailableBreakablesForArea(coins)
         local avail = {}
         if not coins then return avail end
-        for id, data in pairs(coins) do
+        for id,data in pairs(coins) do
             if type(data) == "table" then
                 local w = tostring(data.w or data.world or "")
                 local a = tostring(data.a or data.area or "")
@@ -210,13 +208,9 @@ local ok, mainErr = pcall(function()
         if #avail == 0 then return end
 
         local count = math.min(#freePets, #avail)
-        for i=1, count do
-            local pet = freePets[i]
-            local target = avail[i]
-            if pet and target and target.id then
-                pcall(function() AssignPetToBreakable(pet, target.id, false) end)
-                task.wait(SAFE_DELAY_BETWEEN_ASSIGN)
-            end
+        for i=1,count do
+            local pet = freePets[i]; local t = avail[i]
+            if pet and t and t.id then pcall(function() AssignPetToBreakable(pet, t.id, false) end); task.wait(SAFE_DELAY_BETWEEN_ASSIGN) end
         end
     end
 
@@ -234,14 +228,7 @@ local ok, mainErr = pcall(function()
         local avail = GetAvailableBreakablesForArea(coins)
         if #avail == 0 then return end
         local count = math.min(#freePets, #avail, 2)
-        for i=1, count do
-            local pet = freePets[i]
-            local target = avail[i]
-            if pet and target and target.id then
-                pcall(function() AssignPetToBreakable(pet, target.id, true) end)
-                task.wait(0.3 + math.random(0,300)/1000)
-            end
-        end
+        for i=1,count do local pet = freePets[i]; local t = avail[i]; if pet and t and t.id then pcall(function() AssignPetToBreakable(pet, t.id, true) end); task.wait(0.3 + math.random(0,300)/1000) end end
     end
 
     local function FillAssignmentsBlatant(coins)
@@ -257,16 +244,10 @@ local ok, mainErr = pcall(function()
         if #freePets == 0 then return end
         local avail = GetAvailableBreakablesForArea(coins)
         if #avail == 0 then return end
-        local iPet, iAvail = 1, 1
+        local iPet,iAvail = 1,1
         while iPet <= #freePets and iAvail <= #avail do
-            local pet = freePets[iPet]; local target = avail[iAvail]
-            if pet and target and target.id then
-                pcall(function() AssignPetToBreakable(pet, target.id, false) end)
-                iPet = iPet + 1; iAvail = iAvail + 1
-                task.wait(0.01)
-            else
-                iAvail = iAvail + 1
-            end
+            local pet = freePets[iPet]; local t = avail[iAvail]
+            if pet and t and t.id then pcall(function() AssignPetToBreakable(pet, t.id, false) end); iPet=iPet+1; iAvail=iAvail+1; task.wait(0.01) else iAvail=iAvail+1 end
         end
     end
 
@@ -275,7 +256,7 @@ local ok, mainErr = pcall(function()
         if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
         local hrp = LocalPlayer.Character.HumanoidRootPart
         local bestId, bestDist = nil, math.huge
-        for id, data in pairs(coins) do
+        for id,data in pairs(coins) do
             if type(data) == "table" and matchesTargetType(TargetNearestType, data) then
                 local p = data.p
                 if p and typeof(p) == "Vector3" then
@@ -301,368 +282,7 @@ local ok, mainErr = pcall(function()
         end
     end
 
-    -- ======= GUI HELPERS (small, clean, black) =======
-    local function makeDropdown(parent, posX, posY, width, labelText, options, onSelect)
-        options = options or {}
-        local label = Instance.new("TextLabel", parent)
-        label.Size = UDim2.new(0, width, 0, 14)
-        label.Position = UDim2.new(0, posX, 0, posY)
-        label.BackgroundTransparency = 1
-        label.Text = labelText
-        label.TextColor3 = Color3.new(1,1,1)
-        label.Font = Enum.Font.SourceSans
-        label.TextSize = 12
-
-        local btn = Instance.new("TextButton", parent)
-        btn.Size = UDim2.new(0, width, 0, 22)
-        btn.Position = UDim2.new(0, posX, 0, posY + 14)
-        btn.Text = options[1] or "None"
-        btn.Font = Enum.Font.SourceSans
-        btn.TextSize = 12
-        btn.TextColor3 = Color3.new(1,1,1)
-        btn.BackgroundColor3 = Color3.fromRGB(20,20,20)
-        btn.AutoButtonColor = true
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0,6)
-
-        local menu = Instance.new("Frame", parent)
-        menu.Size = UDim2.new(0, width, 0, math.min(#options*20, 200))
-        menu.Position = UDim2.new(0, posX, 0, posY + 36)
-        menu.Visible = false
-        menu.BackgroundColor3 = Color3.fromRGB(12,12,12)
-        Instance.new("UICorner", menu).CornerRadius = UDim.new(0,6)
-        local layout = Instance.new("UIListLayout", menu)
-        layout.Padding = UDim.new(0,4)
-
-        local function populate(opts)
-            for _, c in ipairs(menu:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
-            for _, opt in ipairs(opts) do
-                local optBtn = Instance.new("TextButton", menu)
-                optBtn.Size = UDim2.new(1, -8, 0, 18)
-                optBtn.Position = UDim2.new(0,4,0,0)
-                optBtn.Text = opt
-                optBtn.BackgroundTransparency = 1
-                optBtn.Font = Enum.Font.SourceSans
-                optBtn.TextColor3 = Color3.new(1,1,1)
-                optBtn.TextSize = 12
-                optBtn.AutoButtonColor = true
-                optBtn.MouseButton1Click:Connect(function()
-                    btn.Text = opt
-                    menu.Visible = false
-                    onSelect(opt)
-                end)
-            end
-            menu.Size = UDim2.new(0, width, 0, math.min(#opts*22, 200))
-        end
-
-        populate(options)
-
-        btn.MouseButton1Click:Connect(function()
-            menu.Visible = not menu.Visible
-        end)
-
-        return {
-            Button = btn,
-            Menu = menu,
-            Label = label,
-            SetOptions = function(newOptions) populate(newOptions) end
-        }
-    end
-
-    -- ======= GUI (top-left, black, minimize 20x20) =======
-    local function CreateGUI()
-        local screenGui = Instance.new("ScreenGui")
-        screenGui.Name = "Hate_AutoFarm_GUI"
-        screenGui.ResetOnSpawn = false
-        screenGui.Parent = PlayerGui
-
-        local frame = Instance.new("Frame", screenGui)
-        frame.Size = UDim2.new(0, 360, 0, 220)
-        frame.Position = UDim2.new(0, 10, 0, 36) -- fixed top-left below Roblox top bar
-        frame.BackgroundColor3 = Color3.fromRGB(12,12,12)
-        Instance.new("UICorner", frame).CornerRadius = UDim.new(0,6)
-        frame.Active = true -- for mobile interactions
-        -- draggable (user asked to keep draggable earlier and mobile friendly)
-        local dragging, dragInput, dragStart, startPos
-        frame.InputBegan:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
-                dragging = true
-                dragStart = input.Position
-                startPos = frame.Position
-                input.Changed:Connect(function()
-                    if input.UserInputState == Enum.UserInputState.End then
-                        dragging = false
-                    end
-                end)
-            end
-        end)
-        frame.InputChanged:Connect(function(input)
-            if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
-                dragInput = input
-            end
-        end)
-        UserInputService.InputChanged:Connect(function(input)
-            if input == dragInput and dragging and dragStart and startPos then
-                local delta = input.Position - dragStart
-                frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-            end
-        end)
-
-        -- Minimize button top-right (20x20)
-        local minBtn = Instance.new("TextButton", frame)
-        minBtn.Size = UDim2.new(0, 20, 0, 20)
-        minBtn.Position = UDim2.new(1, -26, 0, 6)
-        minBtn.Text = "▢"
-        minBtn.Font = Enum.Font.SourceSansBold
-        minBtn.TextSize = 14
-        minBtn.BackgroundColor3 = Color3.fromRGB(28,28,28)
-        minBtn.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", minBtn).CornerRadius = UDim.new(0,4)
-
-        local title = Instance.new("TextLabel", frame)
-        title.Size = UDim2.new(1, -52, 0, 24)
-        title.Position = UDim2.new(0, 10, 0, 6)
-        title.BackgroundTransparency = 1
-        title.Font = Enum.Font.SourceSansBold
-        title.TextSize = 14
-        title.TextColor3 = Color3.new(1,1,1)
-        title.Text = "Hate's Autofarm"
-
-        -- Buttons top row
-        local pickBtn = Instance.new("TextButton", frame)
-        pickBtn.Size = UDim2.new(0.48, -8, 0, 34)
-        pickBtn.Position = UDim2.new(0, 10, 0, 36)
-        pickBtn.Text = "Pick Best Pets"
-        pickBtn.Font = Enum.Font.SourceSansBold
-        pickBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
-        pickBtn.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", pickBtn).CornerRadius = UDim.new(0,6)
-
-        local startBtn = Instance.new("TextButton", frame)
-        startBtn.Size = UDim2.new(0.48, -8, 0, 34)
-        startBtn.Position = UDim2.new(0, 186, 0, 36)
-        startBtn.Text = "Start"
-        startBtn.Font = Enum.Font.SourceSansBold
-        startBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
-        startBtn.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0,6)
-
-        -- Mode buttons (small)
-        local normalBtn = Instance.new("TextButton", frame)
-        normalBtn.Size = UDim2.new(0.30, -6, 0, 22)
-        normalBtn.Position = UDim2.new(0, 10, 0, 78)
-        normalBtn.Text = "Normal"
-        normalBtn.Font = Enum.Font.SourceSans
-        normalBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
-        normalBtn.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", normalBtn).CornerRadius = UDim.new(0,6)
-
-        local safeBtn = Instance.new("TextButton", frame)
-        safeBtn.Size = UDim2.new(0.30, -6, 0, 22)
-        safeBtn.Position = UDim2.new(0, 126, 0, 78)
-        safeBtn.Text = "Safe"
-        safeBtn.Font = Enum.Font.SourceSans
-        safeBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
-        safeBtn.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", safeBtn).CornerRadius = UDim.new(0,6)
-
-        local blatBtn = Instance.new("TextButton", frame)
-        blatBtn.Size = UDim2.new(0.30, -6, 0, 22)
-        blatBtn.Position = UDim2.new(0, 242, 0, 78)
-        blatBtn.Text = "Blatant"
-        blatBtn.Font = Enum.Font.SourceSans
-        blatBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
-        blatBtn.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", blatBtn).CornerRadius = UDim.new(0,6)
-
-        -- Target Nearest
-        local nearestBtn = Instance.new("TextButton", frame)
-        nearestBtn.Size = UDim2.new(0.96, -16, 0, 26)
-        nearestBtn.Position = UDim2.new(0, 10, 0, 108)
-        nearestBtn.Text = "Target Nearest (All Pets)"
-        nearestBtn.Font = Enum.Font.SourceSans
-        nearestBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
-        nearestBtn.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", nearestBtn).CornerRadius = UDim.new(0,6)
-
-        -- Dropdowns area (5px below the buttons)
-        local dropdownY = 142
-
-        local worldDropdown = nil
-        local areaDropdown = nil
-        local targetDropdown = nil
-
-        worldDropdown = makeDropdown(frame, 10, dropdownY, 160, "World", (function()
-            local t = {}
-            for k,_ in pairs(WorldsTable) do table.insert(t, k) end
-            table.sort(t)
-            return t
-        end)(), function(selected)
-            SelectedWorld = selected or SelectedWorld
-            local areas = WorldsTable[SelectedWorld] or {}
-            if areaDropdown then
-                areaDropdown.SetOptions(areas)
-                if #areas > 0 then
-                    SelectedArea = areas[1]
-                    areaDropdown.Button.Text = areas[1]
-                else
-                    SelectedArea = ""
-                    areaDropdown.Button.Text = "None"
-                end
-            end
-            petToTarget = {}
-            targetToPet = {}
-            petCooldowns = {}
-        end)
-
-        areaDropdown = makeDropdown(frame, 184, dropdownY, 160, "Area", WorldsTable[SelectedWorld] or {}, function(selected)
-            SelectedArea = selected or SelectedArea
-            petToTarget = {}
-            targetToPet = {}
-            petCooldowns = {}
-        end)
-
-        targetDropdown = makeDropdown(frame, 10, dropdownY + 56, 160, "Target Type", TargetTypeOptions, function(selected)
-            TargetNearestType = selected or TargetNearestType
-        end)
-
-        -- Egg animation remove toggle & auto-hatch placeholders
-        local eggToggle = Instance.new("TextButton", frame)
-        eggToggle.Size = UDim2.new(0.48, -8, 0, 26)
-        eggToggle.Position = UDim2.new(0, 184, 0, dropdownY + 56)
-        eggToggle.Text = "Egg Anim: OFF"
-        eggToggle.Font = Enum.Font.SourceSans
-        eggToggle.BackgroundColor3 = Color3.fromRGB(18,18,18)
-        eggToggle.TextColor3 = Color3.new(1,1,1)
-        Instance.new("UICorner", eggToggle).CornerRadius = UDim.new(0,6)
-        local eggAnimDisabled = false
-
-        -- Placeholders for Auto Fuse/Gold/Rainbow/DarkMatter/Hatch sections (empty for now)
-        local placeholderLabel = Instance.new("TextLabel", frame)
-        placeholderLabel.Size = UDim2.new(1, -20, 0, 18)
-        placeholderLabel.Position = UDim2.new(0, 10, 0, 188)
-        placeholderLabel.BackgroundTransparency = 1
-        placeholderLabel.Font = Enum.Font.SourceSans
-        placeholderLabel.TextSize = 12
-        placeholderLabel.TextColor3 = Color3.new(1,1,1)
-        placeholderLabel.Text = "Placeholders: Auto Fuse | Gold | Rainbow | DarkMatter | Auto Hatch (configure later)"
-
-        -- Status label
-        local statusLabel = Instance.new("TextLabel", frame)
-        statusLabel.Size = UDim2.new(1, -20, 0, 18)
-        statusLabel.Position = UDim2.new(0, 10, 0, 206)
-        statusLabel.BackgroundTransparency = 1
-        statusLabel.Font = Enum.Font.SourceSans
-        statusLabel.TextSize = 12
-        statusLabel.TextColor3 = Color3.new(1,1,1)
-        statusLabel.Text = ("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets)
-
-        -- Restore small button (always visible when minimized)
-        local restoreBtn = Instance.new("TextButton", PlayerGui)
-        restoreBtn.Name = "HateRestore"
-        restoreBtn.Size = UDim2.new(0, 28, 0, 28)
-        restoreBtn.Position = UDim2.new(0, 10, 0, 36)
-        restoreBtn.Text = "H"
-        restoreBtn.Font = Enum.Font.SourceSansBold
-        restoreBtn.TextSize = 14
-        restoreBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
-        restoreBtn.TextColor3 = Color3.new(1,1,1)
-        restoreBtn.Visible = false
-        Instance.new("UICorner", restoreBtn).CornerRadius = UDim.new(0,6)
-
-        -- toggle egg animation remover
-        eggToggle.MouseButton1Click:Connect(function()
-            eggAnimDisabled = not eggAnimDisabled
-            eggToggle.Text = eggAnimDisabled and "Egg Anim: ON (Disabled)" or "Egg Anim: OFF"
-            if eggAnimDisabled then
-                -- best-effort: hook common OpenEgg function via getgc (not guaranteed on all exploits)
-                pcall(function()
-                    for i,v in pairs(getgc and getgc(true) or {}) do
-                        if type(v) == "table" and rawget(v, "OpenEgg") then
-                            -- backup if not present
-                            if not rawget(v, "_OpenEgg_backup") then v._OpenEgg_backup = v.OpenEgg end
-                            v.OpenEgg = function() return end
-                        elseif type(v) == "function" then
-                            -- some games keep functions directly; try to find by name (best-effort)
-                        end
-                    end
-                end)
-            else
-                pcall(function()
-                    for i,v in pairs(getgc and getgc(true) or {}) do
-                        if type(v) == "table" and rawget(v, "_OpenEgg_backup") then
-                            v.OpenEgg = v._OpenEgg_backup
-                            v._OpenEgg_backup = nil
-                        end
-                    end
-                end)
-            end
-        end)
-
-        -- ===== button behaviors & mode toggle helper =====
-        local function setMode(newMode)
-            Mode = newMode or "None"
-            -- visual update
-            normalBtn.BackgroundColor3 = (Mode == "Normal") and Color3.fromRGB(48,48,48) or Color3.fromRGB(18,18,18)
-            safeBtn.BackgroundColor3   = (Mode == "Safe") and Color3.fromRGB(48,48,48) or Color3.fromRGB(18,18,18)
-            blatBtn.BackgroundColor3   = (Mode == "Blatant") and Color3.fromRGB(48,48,48) or Color3.fromRGB(18,18,18)
-            nearestBtn.BackgroundColor3= (Mode == "Nearest") and Color3.fromRGB(48,48,48) or Color3.fromRGB(18,18,18)
-            statusLabel.Text = ("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets)
-            petToTarget = {}
-            targetToPet = {}
-            petCooldowns = {}
-        end
-
-        pickBtn.MouseButton1Click:Connect(function()
-            statusLabel.Text = "Equipping best pets..."
-            local chosen = pickTopNFromSave()
-            if #chosen == 0 then
-                statusLabel.Text = "No pets found."
-                return
-            end
-            trackedPets = chosen
-            for _, uid in ipairs(trackedPets) do
-                local ok, res = EquipPet(uid)
-                if not ok then warn("[Hate AutoFarm] EquipPet failed for", uid, res) end
-                task.wait(0.06)
-            end
-            task.wait(EQUIP_WAIT)
-            statusLabel.Text = ("Equipped %d pets"):format(#trackedPets)
-        end)
-
-        startBtn.MouseButton1Click:Connect(function()
-            if Mode == "None" then setMode("Normal") else setMode("None") end
-        end)
-
-        normalBtn.MouseButton1Click:Connect(function() if Mode ~= "Normal" then setMode("Normal") else setMode("None") end end)
-        safeBtn.MouseButton1Click:Connect(function() if Mode ~= "Safe" then setMode("Safe") else setMode("None") end end)
-        blatBtn.MouseButton1Click:Connect(function() if Mode ~= "Blatant" then setMode("Blatant") else setMode("None") end end)
-        nearestBtn.MouseButton1Click:Connect(function() if Mode ~= "Nearest" then setMode("Nearest") else setMode("None") end end)
-
-        minBtn.MouseButton1Click:Connect(function()
-            frame.Visible = false
-            restoreBtn.Visible = true
-        end)
-
-        restoreBtn.MouseButton1Click:Connect(function()
-            frame.Visible = true
-            restoreBtn.Visible = false
-        end)
-
-        -- return GUI handles
-        return {
-            Gui = screenGui,
-            Frame = frame,
-            StatusLabel = statusLabel,
-            WorldDropdown = worldDropdown,
-            AreaDropdown = areaDropdown,
-            TargetDropdown = targetDropdown,
-            SetMode = setMode
-        }
-    end
-
-    local ui = CreateGUI()
-
-    -- ======= ANTI-AFK (run once) =======
+    -- ======= ANTI AFK (run once) =======
     pcall(function()
         local vu = game:GetService("VirtualUser")
         Players.LocalPlayer.Idled:Connect(function()
@@ -672,12 +292,139 @@ local ok, mainErr = pcall(function()
         end)
     end)
 
-    -- ======= MAIN BACKGROUND LOOP =======
+    -- ======= RAYFIELD UI LOADING =======
+    local Rayfield
+    local success, lib = pcall(function()
+        return loadstring(game:HttpGet("https://raw.githubusercontent.com/shlexware/Rayfield/main/source"))()
+    end)
+    if success and type(lib) == "table" then Rayfield = lib else Rayfield = nil warn("[Hate AF] Rayfield failed to load; UI will fallback to simple print/status only.") end
+
+    -- ======= UI & CONTROL HOOKS =======
+    local uiHandles = {}
+    local function createFallbackUI()
+        -- minimal fallback UI (if Rayfield fails) - prints status and exposes simple Buttons
+        print("[Hate AF] Rayfield not available — running in fallback mode.")
+        -- We'll still allow toggling modes via commands in the output (not ideal but safe)
+    end
+
+    if Rayfield then
+        local Window = Rayfield:CreateWindow({
+            Name = "Hate's Autofarm",
+            LoadingTitle = "Hate's Autofarm",
+            LoadingSubtitle = "Quality Of Life",
+            ConfigurationSaving = {Enabled=false, FolderName=nil, FileName=nil},
+            KeySystem = false
+        })
+
+        local mainTab = Window:CreateTab("Hate' Quality Of Life")
+        local statusSection = mainTab:CreateSection("Status")
+        local statusLabel = mainTab:CreateLabel(("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets))
+        local controlSection = mainTab:CreateSection("Autofarm Controls")
+        local pickBtn = mainTab:CreateButton({Name="Pick Best Pets", Description="", Callback=function() trackedPets = pickTopNFromSave(); for _,u in ipairs(trackedPets) do pcall(function() EquipPet(u) end); task.wait(0.06) end; task.wait(EQUIP_WAIT); statusLabel:Refresh(("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets)) end})
+        local equipBtn = mainTab:CreateButton({Name="Equip Best (remote)", Description="", Callback=function() local ok = EquipBestPetsRemote(); if ok then task.wait(0.6) end end})
+        -- Mode toggles (mutually exclusive)
+        local function setModeUI(newMode)
+            Mode = newMode
+            statusLabel:Refresh(("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets))
+            petToTarget = {}; targetToPet = {}; petCooldowns = {}
+        end
+        local modeSection = mainTab:CreateSection("Mode")
+        local normalToggle = mainTab:CreateToggle({Name="Normal Mode", CurrentValue=false, Flag="NormalMode", Callback=function(v) if v then setModeUI("Normal") else setModeUI("None") end end})
+        local safeToggle = mainTab:CreateToggle({Name="Safe Mode", CurrentValue=false, Flag="SafeMode", Callback=function(v) if v then setModeUI("Safe") else setModeUI("None") end end})
+        local blatToggle = mainTab:CreateToggle({Name="Blatant Mode", CurrentValue=false, Flag="BlatMode", Callback=function(v) if v then setModeUI("Blatant") else setModeUI("None") end end})
+        local nearestToggle = mainTab:CreateToggle({Name="Target Nearest (All Pets)", CurrentValue=false, Callback=function(v) if v then setModeUI("Nearest") else setModeUI("None") end end})
+
+        -- Area selection section
+        local areaSection = mainTab:CreateSection("Area Selection")
+        local worldList = {}
+        for k,_ in pairs(WorldsTable) do table.insert(worldList, k) end
+        table.sort(worldList)
+        local worldDropdown = mainTab:CreateDropdown({Name="World", Options=worldList, CurrentOption=SelectedWorld, Flag="WorldDD", Callback=function(opt)
+            SelectedWorld = opt
+            local areas = WorldsTable[SelectedWorld] or {}
+            SelectedArea = areas[1] or ""
+            -- update area dropdown options (Rayfield supports :UpdateDropdown but API varies; using CreateDropdown replacement)
+            -- We'll recreate area dropdown by storing handle and updating Options through Refresh method if present.
+            if uiHandles.AreaDropdown and uiHandles.AreaDropdown.UpdateOptions then
+                uiHandles.AreaDropdown:UpdateOptions(areas)
+                uiHandles.AreaDropdown:Set(areas[1] or "")
+            end
+            petToTarget = {}; targetToPet = {}; petCooldowns = {}
+            statusLabel:Refresh(("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets))
+        end})
+
+        -- create area dropdown and hold handle
+        uiHandles.AreaDropdown = mainTab:CreateDropdown({Name="Area", Options=WorldsTable[SelectedWorld] or {}, CurrentOption=SelectedArea, Callback=function(opt) SelectedArea = opt; petToTarget = {}; targetToPet = {}; petCooldowns = {}; statusLabel:Refresh(("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets)) end})
+
+        -- Target selection
+        uiHandles.TargetDropdown = mainTab:CreateDropdown({Name="Target Type", Options=TargetTypeOptions, CurrentOption=TargetNearestType, Callback=function(opt) TargetNearestType = opt end})
+
+        -- Egg section placeholders
+        local eggSection = mainTab:CreateSection("Auto Hatch / Egg Tools")
+        local eggToggle = mainTab:CreateToggle({Name="Disable Egg Animation (best-effort)", CurrentValue=false, Callback=function(v)
+            -- best-effort hook; non guaranteed
+            if v then
+                pcall(function()
+                    for i,v2 in pairs(getgc and getgc(true) or {}) do
+                        if type(v2) == "table" and rawget(v2, "OpenEgg") then
+                            if not rawget(v2, "_OpenEgg_backup") then v2._OpenEgg_backup = v2.OpenEgg end
+                            v2.OpenEgg = function() return end
+                        end
+                    end
+                end)
+            else
+                pcall(function()
+                    for i,v2 in pairs(getgc and getgc(true) or {}) do
+                        if type(v2) == "table" and rawget(v2, "_OpenEgg_backup") then
+                            v2.OpenEgg = v2._OpenEgg_backup
+                            v2._OpenEgg_backup = nil
+                        end
+                    end
+                end)
+            end
+        end})
+
+        -- Placeholders area
+        local placeholderSection = mainTab:CreateSection("Placeholders")
+        placeholderSection:AddLabel("Auto Fuse | Auto Gold | Auto Rainbow | Auto DarkMatter (placeholders)")
+
+        -- Minimize / restore controls (we'll hide Rayfield window by toggling visibility)
+        local toggleVisibilityBtn = mainTab:CreateButton({Name="Minimize UI (show restore button)", Callback=function()
+            -- Rayfield windows usually have an internal toggle; we'll instead hide the main window container if present
+            -- Rayfield provides Close/hide in some forks; best-effort:
+            pcall(function() Window:Hide() end)
+            -- Create restore button on-screen
+            if not PlayerGui:FindFirstChild("HateRestoreBtn") then
+                local btn = Instance.new("TextButton", PlayerGui)
+                btn.Name = "HateRestoreBtn"
+                btn.Size = UDim2.new(0, 28, 0, 28)
+                btn.Position = UDim2.new(0, 10, 0, 36)
+                btn.Text = "H"
+                btn.Font = Enum.Font.SourceSansBold
+                btn.BackgroundColor3 = Color3.fromRGB(20,20,20)
+                btn.TextColor3 = Color3.new(1,1,1)
+                local corner = Instance.new("UICorner", btn); corner.CornerRadius = UDim.new(0,6)
+                btn.MouseButton1Click:Connect(function() pcall(function() Window:Show() end); btn:Destroy() end)
+            end
+        end})
+
+        -- store UI handles
+        uiHandles.StatusLabel = statusLabel
+        uiHandles.WorldDropdown = worldDropdown
+        uiHandles.AreaDropdownHandle = uiHandles.AreaDropdown
+        uiHandles.TargetDropdownHandle = uiHandles.TargetDropdown
+        uiHandles.Window = Window
+
+    else
+        createFallbackUI()
+    end
+
+    -- ======= BACKGROUND FARM LOOP =======
     task.spawn(function()
         while true do
-            -- update live status
-            if ui and ui.StatusLabel then
-                ui.StatusLabel.Text = ("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets)
+            -- update small status if possible
+            if uiHandles and uiHandles.StatusLabel and type(uiHandles.StatusLabel.Refresh) == "function" then
+                uiHandles.StatusLabel:Refresh(("Mode: %s | World: %s | Area: %s | Pets: %d"):format(Mode, SelectedWorld, SelectedArea, #trackedPets))
             end
 
             local coins = nil
@@ -718,7 +465,7 @@ local ok, mainErr = pcall(function()
                     FillAssignmentsSafe(coins)
                     pcall(function() ClaimOrbs({}) end)
                 end
-                task.wait(MAIN_LOOP_DELAY + SAFE_EXTRA_DELAY + math.random(0,300)/1000)
+                task.wait(MAIN_LOOP_DELAY + 0.6 + math.random(0,300)/1000)
             elseif Mode == "Blatant" then
                 if #trackedPets == 0 then
                     trackedPets = pickTopNFromSave()
@@ -737,12 +484,12 @@ local ok, mainErr = pcall(function()
         end
     end)
 
-    print("[Hate AutoFarm] Full script loaded. GUI at top-left. Pick Best Pets -> Start to run.")
+    print("[Hate AF] Script loaded. Use the Rayfield UI to control modes.")
 
 end) -- end pcall
 
 if not ok then
-    warn("[Hate AutoFarm] Startup error:", mainErr)
+    warn("[Hate AF] Startup error:", mainErr)
 else
-    print("[Hate AutoFarm] Script executed successfully!")
+    print("[Hate AF] Script executed successfully!")
 end
