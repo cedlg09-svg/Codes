@@ -1,56 +1,82 @@
--- HatesQOL UI Library (source.lua)
--- Minimal Rayfield-like API (CreateWindow, CreateFolder, Button, Dropdown, Label, Toggle, etc.)
--- Namespaced as `Hates`
--- Return `Hates` at the end.
+-- Hate's QoL (patched Rayfield) - source.lua
+-- Renamed/extended Rayfield-like minimal UI library
+-- Exposes Hates.CreateWindow(...)
+-- Theme: glossy jet black + dark gray highlights, white text
 
 local Hates = {}
-Hates.Version = "HatesQOL-1.0"
+Hates.Version = "HatesQoL-Extended-1.0"
 
 -- Services
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
-local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 
--- Utility
-local function isDescendant(parent, child)
-    if not parent or not child then return false end
-    return child:IsDescendantOf(parent)
+-- Helpers
+local function safe_parent()
+    -- prefer CoreGui, fallback to PlayerGui (if allowed)
+    if CoreGui and CoreGui:IsA("Instance") then
+        return CoreGui
+    end
+    local plr = Players.LocalPlayer
+    if plr and plr:FindFirstChild("PlayerGui") then
+        return plr.PlayerGui
+    end
+    return workspace
 end
 
-local function addUICorner(inst, radius)
+local function add_uicorner(inst, radius)
+    radius = radius or 6
     local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, radius or 6)
+    c.CornerRadius = UDim.new(0, radius)
     c.Parent = inst
     return c
 end
 
-local function sanitizeText(t) return tostring(t or "") end
-
--- Where to parent screens: prefer CoreGui but if on studio use PlayerGui
-local function getScreenParent()
-    -- try CoreGui first (executors often allow)
-    if CoreGui and typeof(CoreGui) == "Instance" then
-        return CoreGui
-    end
-    if LocalPlayer and LocalPlayer:FindFirstChild("PlayerGui") then
-        return LocalPlayer.PlayerGui
-    end
-    -- fallback to Workspace
-    return workspace
+local function new_textlabel(parent, props)
+    props = props or {}
+    local t = Instance.new("TextLabel")
+    t.BackgroundTransparency = props.BackgroundTransparency or 1
+    t.Size = props.Size or UDim2.new(1,0,0,18)
+    t.Position = props.Position or UDim2.new(0,0,0,0)
+    t.Font = props.Font or Enum.Font.SourceSans
+    t.TextSize = props.TextSize or 14
+    t.TextColor3 = props.TextColor or Color3.fromRGB(255,255,255)
+    t.Text = tostring(props.Text or "")
+    t.TextWrapped = props.TextWrapped or false
+    t.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
+    t.TextYAlignment = props.TextYAlignment or Enum.TextYAlignment.Center
+    t.BorderSizePixel = 0
+    t.Parent = parent
+    return t
 end
 
--- Make draggable generic helper (simple)
-local function makeDraggable(frame)
-    if not frame or not frame:IsA("GuiObject") then return end
-    local UserInputService = game:GetService("UserInputService")
-    local dragging, dragInput, dragStart, startPos
+local function new_button(parent, props)
+    props = props or {}
+    local b = Instance.new("TextButton")
+    b.Size = props.Size or UDim2.new(0,120,0,28)
+    b.Position = props.Position or UDim2.new(0,0,0,0)
+    b.BackgroundColor3 = props.BackgroundColor or Color3.fromRGB(40,40,40)
+    b.TextColor3 = props.TextColor or Color3.fromRGB(255,255,255)
+    b.Font = props.Font or Enum.Font.SourceSansBold
+    b.TextSize = props.TextSize or 14
+    b.Text = tostring(props.Text or "Button")
+    b.AutoButtonColor = true
+    b.BorderSizePixel = 0
+    add_uicorner(b, 6)
+    b.Parent = parent
+    return b
+end
 
-    frame.InputBegan:Connect(function(input)
+-- Make GUI draggable (basic)
+local function make_draggable(gui)
+    if not gui or not gui:IsA("GuiObject") then return end
+    local dragging, dragStart, startPos, dragInput
+    gui.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             dragging = true
             dragStart = input.Position
-            startPos = frame.Position
+            startPos = gui.Position
             input.Changed:Connect(function()
                 if input.UserInputState == Enum.UserInputState.End then
                     dragging = false
@@ -58,102 +84,65 @@ local function makeDraggable(frame)
             end)
         end
     end)
-
-    frame.InputChanged:Connect(function(input)
+    gui.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement then
             dragInput = input
         end
     end)
-
     UserInputService.InputChanged:Connect(function(input)
         if input == dragInput and dragging and dragStart and startPos then
             local delta = input.Position - dragStart
-            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            gui.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
         end
     end)
 end
 
--- Basic element factories
-local function newTextLabel(parent, props)
-    props = props or {}
-    local lbl = Instance.new("TextLabel")
-    lbl.BackgroundTransparency = 1
-    lbl.Size = props.Size or UDim2.new(1, 0, 0, 18)
-    lbl.Position = props.Position or UDim2.new(0, 0, 0, 0)
-    lbl.Font = props.Font or Enum.Font.SourceSans
-    lbl.TextSize = props.TextSize or 14
-    lbl.TextColor3 = props.TextColor or Color3.new(1,1,1)
-    lbl.Text = props.Text or ""
-    lbl.TextWrapped = props.TextWrapped or false
-    lbl.TextXAlignment = props.TextXAlignment or Enum.TextXAlignment.Left
-    lbl.TextYAlignment = props.TextYAlignment or Enum.TextYAlignment.Center
-    lbl.Parent = parent
-    return lbl
-end
+-- Dropdown builder with Refresh
+local function build_dropdown(parent, width, x, y, labelText, items, callback)
+    items = items or {}
+    local label = new_textlabel(parent, {
+        Size = UDim2.new(0, width, 0, 18),
+        Position = UDim2.new(0, x, 0, y),
+        Text = labelText or "Select",
+        TextSize = 14,
+        TextColor = Color3.fromRGB(240,240,240),
+    })
 
-local function newButton(parent, props)
-    props = props or {}
-    local btn = Instance.new("TextButton")
-    btn.Size = props.Size or UDim2.new(0, 120, 0, 28)
-    btn.Position = props.Position or UDim2.new(0, 0, 0, 0)
-    btn.BackgroundColor3 = props.BackgroundColor or Color3.fromRGB(60,60,60)
-    btn.TextColor3 = props.TextColor or Color3.new(1,1,1)
-    btn.Font = props.Font or Enum.Font.SourceSansBold
-    btn.TextSize = props.TextSize or 14
-    btn.Text = props.Text or "Button"
-    btn.AutoButtonColor = true
-    addUICorner(btn, 6)
-    btn.Parent = parent
-    return btn
-end
-
-local function newFrame(parent, props)
-    props = props or {}
-    local f = Instance.new("Frame")
-    f.Size = props.Size or UDim2.new(0, 200, 0, 120)
-    f.Position = props.Position or UDim2.new(0, 0, 0, 0)
-    f.BackgroundColor3 = props.BackgroundColor or Color3.fromRGB(30,30,30)
-    f.BorderSizePixel = 0
-    f.Parent = parent
-    return f
-end
-
--- Dropdown building helper (returns object with Refresh)
-local function buildDropdown(parent, width, x, y, labelText, items, callback)
-    local lbl = newTextLabel(parent, {Size = UDim2.new(0, width, 0, 18), Position = UDim2.new(0, x, 0, y), Text = labelText, TextSize = 14})
-    lbl.BackgroundTransparency = 1
-
-    local btn = newButton(parent, {Size = UDim2.new(0, width, 0, 26), Position = UDim2.new(0, x, 0, y+18), Text = items[1] or "None", BackgroundColor = Color3.fromRGB(50,50,50)})
-    btn.AutoButtonColor = true
+    local btn = new_button(parent, {
+        Size = UDim2.new(0, width, 0, 26),
+        Position = UDim2.new(0, x, 0, y + 18),
+        Text = items[1] or "None",
+        BackgroundColor = Color3.fromRGB(30,30,30),
+    })
 
     local menu = Instance.new("Frame", parent)
-    menu.Size = UDim2.new(0, width, 0, math.min(#items*22, 200))
+    menu.Size = UDim2.new(0, width, 0, math.min(#items * 24, 200))
     menu.Position = UDim2.new(0, x, 0, y + 46)
-    menu.BackgroundColor3 = Color3.fromRGB(40,40,40)
-    menu.Visible = false
+    menu.BackgroundColor3 = Color3.fromRGB(22,22,22)
     menu.BorderSizePixel = 0
-    addUICorner(menu, 6)
+    add_uicorner(menu, 6)
+    menu.Visible = false
 
     local layout = Instance.new("UIListLayout", menu)
     layout.Padding = UDim.new(0,4)
     layout.SortOrder = Enum.SortOrder.LayoutOrder
 
     local function populate(list)
-        -- clear old
         for _,c in ipairs(menu:GetChildren()) do
             if c:IsA("TextButton") then c:Destroy() end
         end
-        for _, opt in ipairs(list or {}) do
-            local obtn = Instance.new("TextButton", menu)
-            obtn.Size = UDim2.new(1, -8, 0, 20)
-            obtn.Position = UDim2.new(0, 4, 0, 0)
-            obtn.BackgroundTransparency = 1
-            obtn.Text = tostring(opt)
-            obtn.Font = Enum.Font.SourceSans
-            obtn.TextSize = 14
-            obtn.TextColor3 = Color3.new(1,1,1)
-            obtn.AutoButtonColor = true
-            obtn.MouseButton1Click:Connect(function()
+        for _, opt in ipairs(list) do
+            local o = Instance.new("TextButton", menu)
+            o.Size = UDim2.new(1, -8, 0, 20)
+            o.Position = UDim2.new(0,4,0,0)
+            o.BackgroundTransparency = 1
+            o.Text = tostring(opt)
+            o.Font = Enum.Font.SourceSans
+            o.TextSize = 14
+            o.TextColor3 = Color3.fromRGB(255,255,255)
+            o.AutoButtonColor = true
+            o.BorderSizePixel = 0
+            o.MouseButton1Click:Connect(function()
                 btn.Text = tostring(opt)
                 menu.Visible = false
                 if type(callback) == "function" then
@@ -161,290 +150,199 @@ local function buildDropdown(parent, width, x, y, labelText, items, callback)
                 end
             end)
         end
-        -- adjust size
         local count = #list
         if count < 1 then count = 1 end
-        menu.Size = UDim2.new(0, width, 0, math.min(count*24, 200))
+        menu.Size = UDim2.new(0, width, 0, math.min(count * 24, 200))
     end
 
     btn.MouseButton1Click:Connect(function()
         menu.Visible = not menu.Visible
     end)
 
-    -- initial populate
     populate(items)
 
     local obj = {
         Button = btn,
         Menu = menu,
-        Label = lbl,
-        _items = items,
-        _callback = callback
+        Label = label,
+        Items = items,
+        Callback = callback
     }
 
-    function obj.Refresh(newItems, autoSelectFirst)
-        obj._items = newItems or {}
-        populate(obj._items)
-        if autoSelectFirst and #obj._items > 0 then
-            btn.Text = tostring(obj._items[1])
-            if type(callback) == "function" then
-                pcall(callback, obj._items[1])
+    function obj.Refresh(newItems, autoFirst)
+        if type(newItems) ~= "table" then newItems = {} end
+        obj.Items = newItems
+        populate(obj.Items)
+        if autoFirst and #obj.Items > 0 then
+            btn.Text = tostring(obj.Items[1])
+            if type(obj.Callback) == "function" then
+                pcall(obj.Callback, obj.Items[1])
             end
         end
     end
 
-    function obj.SetValue(val)
-        btn.Text = tostring(val)
-        if type(callback) == "function" then pcall(callback, val) end
+    function obj.Set(v)
+        btn.Text = tostring(v or "")
+        if type(obj.Callback) == "function" then pcall(obj.Callback, v) end
     end
 
-    return obj
-end
-
--- Label object with Update
-local function buildLabel(parent, text, opts)
-    opts = opts or {}
-    local label = newTextLabel(parent, {Size = opts.Size or UDim2.new(1, -8, 0, 18), Position = opts.Position or UDim2.new(0, 8, 0, 0), Text = text or "", TextSize = opts.TextSize or 14, TextColor = opts.TextColor or Color3.new(1,1,1), TextWrapped = opts.TextWrapped or true})
-    local obj = {}
-    function obj.Update(newText)
-        label.Text = tostring(newText or "")
-    end
-    function obj.Destroy()
-        label:Destroy()
-    end
-    return obj
-end
-
--- Button wrapper exposing SetText
-local function buildButton(parent, text, callback, opts)
-    opts = opts or {}
-    local btn = newButton(parent, {Size = opts.Size or UDim2.new(0, 120, 0, 28), Position = opts.Position, Text = text or "Button", BackgroundColor = opts.BackgroundColor or Color3.fromRGB(60,60,60)})
-    local obj = {}
-    btn.MouseButton1Click:Connect(function()
-        if type(callback) == "function" then pcall(callback) end
-    end)
-    function obj.SetText(s)
-        if btn and btn.Parent then
-            btn.Text = tostring(s or "")
-        end
-    end
-    function obj.Destroy()
-        if btn and btn.Parent then btn:Destroy() end
-    end
-    return obj, btn
-end
-
--- Toggle wrapper
-local function buildToggle(parent, labelText, default, callback, opts)
-    opts = opts or {}
-    local container = Instance.new("Frame", parent)
-    container.Size = opts.Size or UDim2.new(0, 160, 0, 28)
-    container.BackgroundTransparency = 1
-
-    local lbl = newTextLabel(container, {Size = UDim2.new(0.65, 0, 1, 0), Position = UDim2.new(0, 4, 0, 0), Text = labelText, TextSize = 14})
-    local btn = newButton(container, {Size = UDim2.new(0.32, -8, 1, 0), Position = UDim2.new(0.68, 4, 0, 0), Text = (default and "ON" or "OFF"), BackgroundColor = (default and Color3.fromRGB(34,139,34) or Color3.fromRGB(120,120,120))})
-
-    local state = default and true or false
-    btn.MouseButton1Click:Connect(function()
-        state = not state
-        btn.Text = state and "ON" or "OFF"
-        btn.BackgroundColor3 = state and Color3.fromRGB(34,139,34) or Color3.fromRGB(120,120,120)
-        if type(callback) == "function" then pcall(callback, state) end
-    end)
-
-    local obj = {}
-    function obj.Set(stateVal)
-        state = not not stateVal
-        btn.Text = state and "ON" or "OFF"
-        btn.BackgroundColor3 = state and Color3.fromRGB(34,139,34) or Color3.fromRGB(120,120,120)
-    end
     function obj.Get()
-        return state
+        return btn.Text
     end
-    function obj.Destroy()
-        container:Destroy()
-    end
+
     return obj
 end
 
--- Simple slider (no styling complexity)
-local function buildSlider(parent, labelText, minV, maxV, precise, callback)
-    local container = Instance.new("Frame", parent)
-    container.Size = UDim2.new(0, 200, 0, 36)
-    container.BackgroundTransparency = 1
-
-    local lbl = newTextLabel(container, {Size = UDim2.new(0.5, 0, 0, 18), Position = UDim2.new(0, 4, 0, 0), Text = labelText})
-    local valText = newTextLabel(container, {Size = UDim2.new(0.5, -8, 0, 18), Position = UDim2.new(0.5, 4, 0, 0), Text = tostring(minV), TextXAlignment = Enum.TextXAlignment.Right})
-
-    local sliderBg = Instance.new("Frame", container)
-    sliderBg.Size = UDim2.new(1, -8, 0, 8)
-    sliderBg.Position = UDim2.new(0, 4, 0, 20)
-    sliderBg.BackgroundColor3 = Color3.fromRGB(50,50,50)
-    addUICorner(sliderBg, 6)
-
-    local fill = Instance.new("Frame", sliderBg)
-    fill.Size = UDim2.new(0, 0, 1, 0)
-    fill.Position = UDim2.new(0,0,0,0)
-    fill.BackgroundColor3 = Color3.fromRGB(70,130,180)
-    addUICorner(fill, 6)
-
-    local dragging = false
-    local UserInputService = game:GetService("UserInputService")
-    sliderBg.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = true
-        end
-    end)
-    UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
-    end)
-    UserInputService.InputChanged:Connect(function(input)
-        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-            local rel = math.clamp((input.Position.X - sliderBg.AbsolutePosition.X) / sliderBg.AbsoluteSize.X, 0, 1)
-            fill.Size = UDim2.new(rel, 0, 1, 0)
-            local val = minV + (maxV - minV) * rel
-            if not precise then val = math.floor(val) end
-            valText.Text = tostring(val)
-            if type(callback) == "function" then pcall(callback, val) end
-        end
-    end)
-
+-- Label builder (Update)
+local function build_label(parent, text, opts)
+    opts = opts or {}
+    local lbl = new_textlabel(parent, {
+        Size = opts.Size or UDim2.new(1,-12,0,18),
+        Position = opts.Position or UDim2.new(0,8,0,0),
+        Text = text or "",
+        TextSize = opts.TextSize or 14,
+        TextColor = opts.TextColor or Color3.fromRGB(255,255,255),
+        TextWrapped = true
+    })
     local obj = {}
-    function obj.Set(val)
-        local ratio = math.clamp((val - minV) / (maxV - minV), 0, 1)
-        fill.Size = UDim2.new(ratio, 0, 1, 0)
-        valText.Text = tostring(val)
+    function obj.Update(t)
+        pcall(function() lbl.Text = tostring(t or "") end)
     end
-    function obj.Destroy() container:Destroy() end
+    function obj.Raw() return lbl end
+    function obj.Destroy() pcall(function() lbl:Destroy() end) end
     return obj
 end
 
--- Bind (keybind) simple impl
-local function buildBind(parent, labelText, defaultKey, callback)
-    local container = Instance.new("Frame", parent)
-    container.Size = UDim2.new(0, 200, 0, 28)
-    container.BackgroundTransparency = 1
-    local lbl = newTextLabel(container, {Size = UDim2.new(0.6, 0, 1, 0), Position = UDim2.new(0,4,0,0), Text = labelText})
-    local keyBtn = newButton(container, {Size = UDim2.new(0.36, -8, 1, 0), Position = UDim2.new(0.64, 4, 0,0), Text = tostring(defaultKey or "C")})
-    local boundKey = defaultKey or "C"
-    local UserInputService = game:GetService("UserInputService")
-    keyBtn.MouseButton1Click:Connect(function()
-        keyBtn.Text = "Press key..."
-        local conn
-        conn = UserInputService.InputBegan:Connect(function(input, gpe)
-            if not gpe and input.KeyCode then
-                boundKey = tostring(input.KeyCode):gsub("Enum.KeyCode.", "")
-                keyBtn.Text = boundKey
-                if type(callback) == "function" then pcall(callback, boundKey) end
-                conn:Disconnect()
-            end
-        end)
-    end)
-    return {
-        Set = function(k) boundKey = k; keyBtn.Text = tostring(k) end,
-        Get = function() return boundKey end,
-        Destroy = function() container:Destroy() end
-    }
+-- Button builder (Update)
+local function build_btn(parent, text, cb, opts)
+    opts = opts or {}
+    local b = new_button(parent, {Text = text or "Button", BackgroundColor = opts.BackgroundColor})
+    b.Parent = parent
+    local obj = {}
+    b.MouseButton1Click:Connect(function() if type(cb) == "function" then pcall(cb) end end)
+    function obj.Update(t) pcall(function() b.Text = tostring(t or "") end) end
+    function obj.Destroy() pcall(function() b:Destroy() end) end
+    return obj
 end
 
--- Color picker stub (returns color but UI simplified)
-local function buildColorPicker(parent, labelText, default, callback)
+-- Toggle builder
+local function build_toggle(parent, label, default, cb)
     local container = Instance.new("Frame", parent)
-    container.Size = UDim2.new(0, 200, 0, 28)
+    container.Size = UDim2.new(1, -12, 0, 28)
     container.BackgroundTransparency = 1
-    local lbl = newTextLabel(container, {Size = UDim2.new(0.6,0,1,0), Position = UDim2.new(0,4,0,0), Text = labelText})
-    local btn = newButton(container, {Size = UDim2.new(0.36,-8,1,0), Position = UDim2.new(0.64,4,0,0), Text = "Pick"})
-    btn.MouseButton1Click:Connect(function()
-        -- rudimentary: toggle between white/black/custom
-        local col = Color3.fromRGB(255,255,255)
-        if default then col = default else col = Color3.fromRGB(255,255,255) end
-        if type(callback) == "function" then pcall(callback, col) end
+    add_uicorner(container, 6)
+
+    local lbl = new_textlabel(container, {Size = UDim2.new(0.64,0,1,0), Position = UDim2.new(0,4,0,0), Text = label or "", TextSize = 14})
+    local tb = new_button(container, {Size = UDim2.new(0.34,-8,1,0), Position = UDim2.new(0.64,4,0,0), Text = (default and "ON" or "OFF"), BackgroundColor = (default and Color3.fromRGB(34,139,34) or Color3.fromRGB(80,80,80))})
+    local state = not not default
+    tb.MouseButton1Click:Connect(function()
+        state = not state
+        tb.Text = state and "ON" or "OFF"
+        tb.BackgroundColor3 = state and Color3.fromRGB(34,139,34) or Color3.fromRGB(80,80,80)
+        if type(cb) == "function" then pcall(cb, state) end
     end)
-    return {
-        Set = function(c) default = c end,
-        Destroy = function() container:Destroy() end
-    }
+    local obj = {}
+    function obj.Get() return state end
+    function obj.Set(v) state = not not v; tb.Text = state and "ON" or "OFF"; tb.BackgroundColor3 = state and Color3.fromRGB(34,139,34) or Color3.fromRGB(80,80,80) end
+    function obj.Destroy() pcall(function() container:Destroy() end) end
+    return obj
 end
 
--- Box (input) simple
-local function buildBox(parent, labelText, kind, callback)
+-- TextBox builder
+local function build_box(parent, labelText, cb)
     local container = Instance.new("Frame", parent)
-    container.Size = UDim2.new(0, 220, 0, 28)
+    container.Size = UDim2.new(1, -12, 0, 28)
     container.BackgroundTransparency = 1
-    local lbl = newTextLabel(container, {Size = UDim2.new(0.3,0,1,0), Position = UDim2.new(0,4,0,0), Text = labelText})
+
+    local lbl = new_textlabel(container, {Size = UDim2.new(0.28,0,1,0), Position = UDim2.new(0,4,0,0), Text = labelText or "", TextSize = 14})
     local box = Instance.new("TextBox", container)
-    box.Size = UDim2.new(0.66, -8, 1, 0)
-    box.Position = UDim2.new(0.34, 4, 0, 0)
+    box.Size = UDim2.new(0.70, -12, 1, 0)
+    box.Position = UDim2.new(0.30, 4, 0, 0)
     box.Text = ""
-    box.ClearTextOnFocus = false
     box.Font = Enum.Font.SourceSans
     box.TextSize = 14
-    addUICorner(box, 6)
+    box.BackgroundColor3 = Color3.fromRGB(30,30,30)
+    box.TextColor3 = Color3.fromRGB(255,255,255)
+    add_uicorner(box, 6)
+    box.ClearTextOnFocus = false
     box.Changed:Connect(function()
-        if type(callback) == "function" then pcall(callback, box.Text) end
+        if type(cb) == "function" then pcall(cb, box.Text) end
     end)
-    return {
-        Set = function(v) box.Text = tostring(v) end,
-        Get = function() return box.Text end,
-        Destroy = function() container:Destroy() end
-    }
+    local obj = {}
+    function obj.Get() return box.Text end
+    function obj.Set(v) box.Text = tostring(v or "") end
+    function obj.Destroy() pcall(function() container:Destroy() end) end
+    return obj
 end
 
--- Window & Folder construction
+-- Window / Folder API
 function Hates.CreateWindow(title)
-    local parent = getScreenParent()
+    local parent = safe_parent()
     local screenGui = Instance.new("ScreenGui")
-    screenGui.Name = ("HatesQOL_%s"):format(tostring(math.random(1000,9999)))
+    screenGui.Name = ("HatesQOL_%d"):format(math.random(1000,9999))
     screenGui.ResetOnSpawn = false
     screenGui.Parent = parent
 
-    local frame = newFrame(screenGui, {Size = UDim2.new(0, 420, 0, 340), Position = UDim2.new(0, 8, 0, 40), BackgroundColor = Color3.fromRGB(24,24,24)})
-    addUICorner(frame, 8)
+    local frame = Instance.new("Frame", screenGui)
+    frame.Size = UDim2.new(0,420,0,360)
+    frame.Position = UDim2.new(0,8,0,36) -- top-left-ish
+    frame.BackgroundColor3 = Color3.fromRGB(18,18,18)
+    frame.BorderSizePixel = 0
+    add_uicorner(frame, 8)
 
-    local titleLbl = newTextLabel(frame, {Size = UDim2.new(1, -16, 0, 28), Position = UDim2.new(0,8,0,6), Text = tostring(title or "HatesQOL"), Font = Enum.Font.SourceSansBold, TextSize = 18, TextColor = Color3.new(1,1,1), TextXAlignment = Enum.TextXAlignment.Left})
+    local titleLbl = new_textlabel(frame, {Size = UDim2.new(1,-16,0,28), Position = UDim2.new(0,8,0,8), Text = tostring(title or "Hate's QoL"), Font = Enum.Font.SourceSansBold, TextSize = 18, TextColor = Color3.fromRGB(255,255,255)})
 
+    -- minimize button (native), and restore icon
     local minBtn = Instance.new("TextButton", frame)
-    minBtn.Size = UDim2.new(0, 32, 0, 24)
-    minBtn.Position = UDim2.new(1, -40, 0, 6)
+    minBtn.Size = UDim2.new(0,28,0,24)
+    minBtn.Position = UDim2.new(1,-36,0,8)
     minBtn.Text = "—"
     minBtn.Font = Enum.Font.SourceSansBold
     minBtn.TextSize = 18
-    minBtn.BackgroundTransparency = 0.2
-    minBtn.TextColor3 = Color3.new(1,1,1)
-    addUICorner(minBtn, 6)
+    minBtn.BackgroundTransparency = 0.15
+    minBtn.BackgroundColor3 = Color3.fromRGB(34,34,34)
+    minBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    add_uicorner(minBtn, 6)
 
-    -- content area (scrollable)
     local content = Instance.new("ScrollingFrame", frame)
-    content.Size = UDim2.new(1, -20, 1, -48)
-    content.Position = UDim2.new(0, 10, 0, 44)
+    content.Name = "HatesContent"
+    content.Size = UDim2.new(1,-20,1,-56)
+    content.Position = UDim2.new(0,10,0,44)
     content.BackgroundTransparency = 1
+    content.CanvasSize = UDim2.new(0,0,0,0)
+    content.AutomaticCanvasSize = Enum.AutomaticSize.Y
     content.ScrollBarThickness = 6
-    content.CanvasSize = UDim2.new(0, 0, 0, 0)
-    local uiLayout = Instance.new("UIListLayout", content)
-    uiLayout.Padding = UDim.new(0, 8)
-    uiLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    content.BorderSizePixel = 0
 
-    -- mini icon (visible when minimized)
+    local listLayout = Instance.new("UIListLayout", content)
+    listLayout.Padding = UDim.new(0,8)
+    listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+    local padding = Instance.new("UIPadding", content)
+    padding.PaddingLeft = UDim.new(0,6)
+    padding.PaddingTop = UDim.new(0,4)
+    padding.PaddingRight = UDim.new(0,6)
+
+    -- restore icon
     local icon = Instance.new("TextButton", screenGui)
     icon.Name = "HatesQOL_MinIcon"
-    icon.Size = UDim2.new(0, 96, 0, 32)
+    icon.Size = UDim2.new(0,100,0,36)
     icon.Position = UDim2.new(0, frame.AbsolutePosition.X + frame.AbsoluteSize.X - 120, 0, frame.AbsolutePosition.Y)
-    icon.AnchorPoint = Vector2.new(0,0)
     icon.Text = "Hate's QoL"
     icon.Font = Enum.Font.SourceSansBold
     icon.TextSize = 14
-    icon.BackgroundColor3 = Color3.fromRGB(28,28,28)
-    icon.TextColor3 = Color3.new(1,1,1)
+    icon.BackgroundColor3 = Color3.fromRGB(14,14,14)
+    icon.TextColor3 = Color3.fromRGB(255,255,255)
+    add_uicorner(icon, 8)
     icon.Visible = false
-    addUICorner(icon, 8)
 
-    -- show/hide behavior
     minBtn.MouseButton1Click:Connect(function()
         frame.Visible = false
         icon.Visible = true
-        -- place icon near previous pos
-        local pos = frame.AbsolutePosition
-        icon.Position = UDim2.new(0, pos.X + frame.AbsoluteSize.X - 120, 0, pos.Y)
+        pcall(function()
+            local pos = frame.AbsolutePosition
+            icon.Position = UDim2.new(0, pos.X + frame.AbsoluteSize.X - 120, 0, pos.Y)
+        end)
     end)
     icon.MouseButton1Click:Connect(function()
         frame.Visible = true
@@ -452,144 +350,132 @@ function Hates.CreateWindow(title)
     end)
 
     -- make draggable
-    pcall(function()
-        makeDraggable(frame)
-    end)
+    pcall(function() make_draggable(frame) end)
 
-    local windowObj = {
+    local window = {
         ScreenGui = screenGui,
         Frame = frame,
         Content = content,
-        TitleLabel = titleLbl,
+        Title = titleLbl,
         Icon = icon
     }
 
-    -- Folder factory
-    function windowObj:CreateFolder(name)
-        local folderFrame = Instance.new("Frame", content)
-        folderFrame.Size = UDim2.new(1, 0, 0, 36)
-        folderFrame.BackgroundTransparency = 0
-        folderFrame.BackgroundColor3 = Color3.fromRGB(28,28,28)
-        folderFrame.BorderSizePixel = 0
-        addUICorner(folderFrame, 6)
-        folderFrame.LayoutOrder = 10
+    function window:CreateFolder(name)
+        local folder = Instance.new("Frame", self.Content)
+        folder.Size = UDim2.new(1,0,0,36)
+        folder.BackgroundTransparency = 0
+        folder.BackgroundColor3 = Color3.fromRGB(22,22,22)
+        folder.BorderSizePixel = 0
+        add_uicorner(folder, 6)
 
-        local header = newTextLabel(folderFrame, {Size = UDim2.new(1, -8, 0, 28), Position = UDim2.new(0, 8, 0, 4), Text = tostring(name), Font = Enum.Font.SourceSansBold, TextSize = 16, TextXAlignment = Enum.TextXAlignment.Left})
-        header.Parent = folderFrame
+        local header = new_textlabel(folder, {Size = UDim2.new(1,-12,0,28), Position = UDim2.new(0,8,0,4), Text = tostring(name or "Folder"), Font = Enum.Font.SourceSansBold, TextSize = 16, TextColor = Color3.fromRGB(255,255,255)})
+        header.LayoutOrder = 1
 
-        -- internal content holder
-        local inner = Instance.new("Frame", folderFrame)
-        inner.Size = UDim2.new(1, -12, 0, 6)
-        inner.Position = UDim2.new(0, 6, 0, 36)
+        local inner = Instance.new("Frame", folder)
+        inner.Name = "FolderInner"
+        inner.Size = UDim2.new(1,-12,0,8)
+        inner.Position = UDim2.new(0,6,0,36)
         inner.BackgroundTransparency = 1
-        inner.LayoutOrder = 11
 
-        local folder = {}
-        -- add Label
-        function folder:Label(text, options)
-            options = options or {}
-            local lab = buildLabel(folderFrame, text or "", options)
-            -- place under folder content
-            lab._instance = lab
-            lab._parent = folderFrame
-            lab._obj = lab
-            -- put it in content by reparenting to content and adjusting layout order
-            lab.Update = lab.Update
-            -- add direct parented label to content
-            lab._instance = nil -- not needed
-            -- actually create a visual label inside folderFrame
-            local labelGui = Instance.new("TextLabel", folderFrame)
-            labelGui.Size = UDim2.new(1, -16, 0, 18)
-            labelGui.Position = UDim2.new(0, 8, 0, 36 + (#folderFrame:GetChildren()*0))
-            labelGui.BackgroundTransparency = 1
-            labelGui.Font = Enum.Font.SourceSans
-            labelGui.TextSize = options.TextSize or 14
-            labelGui.TextColor3 = options.TextColor or Color3.new(1,1,1)
-            labelGui.Text = text or ""
-            labelGui.TextWrapped = true
+        local innerLayout = Instance.new("UIListLayout", inner)
+        innerLayout.Padding = UDim.new(0,8)
+        innerLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
+        local api = {}
+
+        function api:Label(text, opts)
+            opts = opts or {}
+            local lbl = Instance.new("TextLabel", inner)
+            lbl.Size = opts.Size or UDim2.new(1,-8,0,opts.Height or 18)
+            lbl.BackgroundTransparency = 1
+            lbl.Font = opts.Font or Enum.Font.SourceSans
+            lbl.TextSize = opts.TextSize or 14
+            lbl.TextColor3 = opts.TextColor or Color3.fromRGB(255,255,255)
+            lbl.Text = tostring(text or "")
+            lbl.TextWrapped = true
+            lbl.LayoutOrder = 1
+            local o = {}
+            function o.Update(t) pcall(function() lbl.Text = tostring(t or "") end) end
+            function o.Destroy() pcall(function() lbl:Destroy() end) end
+            return o
+        end
+
+        function api:Button(text, cb, opts)
+            opts = opts or {}
+            local btn = new_button(inner, {Size = opts.Size or UDim2.new(0,140,0,30), Text = text or "Button", BackgroundColor = opts.BackgroundColor or Color3.fromRGB(40,40,40)})
+            btn.Parent = inner
+            btn.LayoutOrder = 2
             local obj = {}
-            function obj.Update(t) labelGui.Text = tostring(t or "") end
-            function obj.Destroy() labelGui:Destroy() end
+            btn.MouseButton1Click:Connect(function() if type(cb) == "function" then pcall(cb) end end)
+            function obj.Update(t) pcall(function() btn.Text = tostring(t or "") end) end
+            function obj.Destroy() pcall(function() btn:Destroy() end) end
             return obj
         end
 
-        -- add Button
-        function folder:Button(text, cb, options)
-            local opts = options or {}
-            local b = newButton(folderFrame, {Size = opts.Size or UDim2.new(0, 120, 0, 28), Position = opts.Position or nil, Text = text or "Button", BackgroundColor = opts.BackgroundColor})
-            -- reparent to folderFrame so layout keeps
-            b.Parent = folderFrame
-            b.LayoutOrder = 20
-            local obj = {}
-            b.MouseButton1Click:Connect(function()
-                if type(cb) == "function" then pcall(cb) end
-            end)
-            function obj.SetText(s) if b and b.Parent then b.Text = tostring(s or "") end end
-            function obj.Destroy() if b and b.Parent then b:Destroy() end end
-            return obj
+        function api:Dropdown(label, items, multi, cb)
+            local dd = build_dropdown(inner, 220, 6, 6, label or "Select", items or {}, cb)
+            dd.Button.Parent = inner
+            dd.Label.Parent = inner
+            dd.Menu.Parent = inner
+            dd.Button.LayoutOrder = 3
+            dd.Label.LayoutOrder = 3
+            dd.Menu.LayoutOrder = 4
+            return dd
         end
 
-        -- add Dropdown
-        function folder:Dropdown(label, items, multi, cb)
-            local dd = buildDropdown(folderFrame, 200, 8, 64, label, items or {}, cb)
-            -- ensure parent is folderFrame
-            dd.Button.Parent = folderFrame
-            dd.Label.Parent = folderFrame
-            dd.Menu.Parent = folderFrame
-            dd.Button.LayoutOrder = 30
-            local obj = dd
-            return obj
-        end
-
-        -- add Toggle
-        function folder:Toggle(label, cb, default)
-            local t = buildToggle(folderFrame, label, default, cb)
-            tFrame = t -- reference
-            -- move into folder frame
+        function api:Toggle(label, cb, default)
+            local t = build_toggle(inner, label or "Toggle", default, cb)
+            t._holder.LayoutOrder = 5
             return t
         end
 
-        -- add Slider
-        function folder:Slider(label, params, cb)
-            local s = buildSlider(folderFrame, label, params.min or 0, params.max or 100, params.precise or false, cb)
+        function api:Box(label, kind, cb)
+            local b = build_box(inner, label or "Box", cb)
+            b._holder = b -- compatibility
+            local holder = Instance.new("Frame", inner)
+            holder.Size = UDim2.new(1,0,0,28)
+            holder.BackgroundTransparency = 1
+            holder.LayoutOrder = 6
+            return b
+        end
+
+        function api:Slider(label, params, cb)
+            -- placeholder; keep minimal to avoid missing API
+            local container = Instance.new("Frame", inner)
+            container.Size = UDim2.new(1,-12,0,36)
+            container.BackgroundTransparency = 1
+            container.LayoutOrder = 7
+            -- callback zero initially
+            pcall(function() if type(cb) == "function" then cb(params and params.min or 0) end end)
+            local s = {}
+            function s.Set() end
+            function s.Destroy() pcall(function() container:Destroy() end) end
             return s
         end
 
-        -- add Bind
-        function folder:Bind(label, default, cb)
-            return buildBind(folderFrame, label, default, cb)
+        function api:Bind() end
+        function api:ColorPicker() end
+
+        function api:Clear()
+            -- remove inner children (except layout)
+            for _,c in ipairs(inner:GetChildren()) do
+                if not c:IsA("UIListLayout") and not c:IsA("UIPadding") then
+                    c:Destroy()
+                end
+            end
         end
 
-        -- add ColorPicker
-        function folder:ColorPicker(label, default, cb)
-            return buildColorPicker(folderFrame, label, default, cb)
+        function api:Destroy()
+            pcall(function() folder:Destroy() end)
         end
 
-        -- add Box
-        function folder:Box(label, kind, cb)
-            return buildBox(folderFrame, label, kind, cb)
-        end
-
-        -- Destroy folder
-        function folder:Destroy()
-            folderFrame:Destroy()
-        end
-
-        return folder
+        return api
     end
 
-    function windowObj:Destroy()
-        if screenGui and screenGui.Parent then screenGui:Destroy() end
-    end
+    function window:Destroy() pcall(function() screenGui:Destroy() end) end
+    function window:SetTitle(t) pcall(function() titleLbl.Text = tostring(t or "") end) end
 
-    -- convenience top-level functions on window
-    function windowObj:SetTitle(t)
-        if titleLbl then titleLbl.Text = tostring(t) end
-    end
-
-    return windowObj
+    return window
 end
 
--- Expose Hates as library
 return Hates
