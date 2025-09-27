@@ -1,23 +1,21 @@
--- HateAF_Fluent_Integrated.lua
--- Paste into NEW LocalScript and run (Delta-safe)
--- Loads external Fluent UI, provides an always-visible 50x50 toggle button (top-center),
--- remembers last tab, and integrates autofarm logic (area-only, one pet per breakable, modes).
+-- Delta-safe HateAF V2 — adds Blatant & TargetNearest modes (mutually exclusive)
+-- Paste into a NEW LocalScript and run in Delta (LocalScript required)
 
--- Delta-safe bootstrap (avoid line1 errors; prevent server execution)
+-- Prevent server execution / line1 BOM issues
 if not game or not game:IsLoaded() then repeat task.wait() until game and game:IsLoaded() end
 local RunService = game:GetService("RunService")
 if RunService:IsServer() then return end
 
 local ok, mainErr = pcall(function()
-    -- ============ CONFIG ============
-    local FLUENT_URL = "https://raw.githubusercontent.com/dawid-scripts/Fluent/releases/latest/download/main.lua"
-    local SAFE_DELAY_BETWEEN_ASSIGN = 0.18
-    local JOIN_DELAY = 0.06
-    local CHANGE_DELAY = 0.04
-    local MAIN_LOOP_DELAY = 0.8
-    local EQUIP_WAIT = 0.45
-    local RETARGET_DELAY = 0.3
 
+    -- ===== SERVICES & SETUP =====
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local Workspace = game:GetService("Workspace")
+    local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
+    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+
+    -- ===== CONFIG =====
     local WorldsTable = {
         ["Spawn"] = {"Shop","Town","Forest","Beach","Mine","Winter","Glacier","Desert","Volcano","Cave","Tech Entry","VIP"},
         ["Fantasy"] = {"Fantasy Shop","Enchanted Forest","Portals","Ancient Island","Samurai Island","Candy Island","Haunted Island","Hell Island","Heaven Island","Heaven's Gate"},
@@ -27,23 +25,24 @@ local ok, mainErr = pcall(function()
         ["Pixel"] = {"Pixel Forest","Pixel Kyoto","Pixel Alps","Pixel Vault"},
         ["Cat"] = {"Cat Paradise","Cat Backyard","Cat Taiga","Cat Throne Room"}
     }
+
     local TargetTypeOptions = {"Any","Coins","Diamonds","Chests","Breakables"}
 
-    -- ============ SERVICES & STATE ============
-    local Players = game:GetService("Players")
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local Workspace = game:GetService("Workspace")
-    local UserInput = game:GetService("UserInputService")
-    local LocalPlayer = Players.LocalPlayer or Players.PlayerAdded:Wait()
-    local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
+    local SAFE_DELAY_BETWEEN_ASSIGN = 0.18
+    local JOIN_DELAY = 0.06
+    local CHANGE_DELAY = 0.04
+    local MAIN_LOOP_DELAY = 0.8
+    local EQUIP_WAIT = 0.45
+    local RETARGET_DELAY = 0.3
 
+    -- ===== STATE =====
     local Network = ReplicatedStorage:FindFirstChild("Network")
     if not Network then warn("[HateAF] ReplicatedStorage.Network not found. Remotes may be missing.") end
 
     local SelectedWorld = "Spawn"
     local SelectedArea = WorldsTable["Spawn"] and WorldsTable["Spawn"][1] or ""
+    local Mode = "None" -- "Normal","Safe","Blatant","NearestArea","NearestGlobal"
     local TargetType = "Any"
-    local Mode = "None" -- Normal, Safe, Blatant, NearestArea, NearestGlobal
     local Enabled = false
     local SlowMode = false
 
@@ -54,7 +53,7 @@ local ok, mainErr = pcall(function()
     local brokenCount = 0
     local startTime = 0
 
-    -- ============ REMOTE HELPERS ============
+    -- ===== SAFE REMOTE CALLER =====
     local function CallRemote(name, argsTable)
         argsTable = argsTable or {}
         if not Network then return false, "Network missing" end
@@ -80,7 +79,7 @@ local ok, mainErr = pcall(function()
     local function ClaimOrbs(arg) return CallRemote("Claim Orbs", {arg or {}}) end
     local function EquipBestPetsRemote() if not Network then return false end local r = Network:FindFirstChild("Equip Best Pets") if not r then return false end local ok = pcall(function() r:InvokeServer() end) return ok end
 
-    -- ============ UTILITIES ============
+    -- ===== UTIL =====
     local function safe_delay(t, f) if type(t)=="number" and type(f)=="function" then task.delay(t, f) end end
     local function safeNumber(x) if type(x)=="number" then return x elseif type(x)=="string" then return tonumber(x) or 0 end return 0 end
 
@@ -134,6 +133,7 @@ local ok, mainErr = pcall(function()
         return pickTopNFromSave()
     end
 
+    -- ===== TARGET TYPE HELPER =====
     local function matchesTargetType(ttype, data)
         if not ttype or ttype=="Any" then return true end
         if not data then return false end
@@ -145,7 +145,7 @@ local ok, mainErr = pcall(function()
         return true
     end
 
-    -- ============ ASSIGN / FARM HELPERS ============
+    -- ===== ASSIGNMENT HELPERS =====
     local function AssignPetToBreakable(petUID, breakId, safeMode)
         if not petUID or not breakId then return false end
         if safeMode then
@@ -238,6 +238,7 @@ local ok, mainErr = pcall(function()
         end
     end
 
+    -- ===== TARGET NEAREST HELPERS =====
     local function TargetNearestInArea(coins)
         if not coins or not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
         local hrp = LocalPlayer.Character.HumanoidRootPart
@@ -298,7 +299,7 @@ local ok, mainErr = pcall(function()
         end
     end
 
-    -- ============ EGG ANIMATION DISABLE (one-shot) ============
+    -- ===== EGG ANIMATION DISABLE ONE-SHOT =====
     local eggDisabled = false
     local function disableEggAnimationOnce()
         if eggDisabled then return false end
@@ -313,7 +314,7 @@ local ok, mainErr = pcall(function()
         return true
     end
 
-    -- ============ ANTI-AFK (one-shot) ============
+    -- ===== ANTI-AFK (one-shot) =====
     pcall(function()
         local vu = game:GetService("VirtualUser")
         Players.LocalPlayer.Idled:Connect(function()
@@ -323,277 +324,244 @@ local ok, mainErr = pcall(function()
         end)
     end)
 
-    -- ============ LOAD FLUENT UI & BUILD INTERFACE ============
-    local FluentLib = nil
-    local loadOk, loadErr = pcall(function()
-        FluentLib = loadstring(game:HttpGet(FLUENT_URL, true))()
-    end)
-    if not loadOk or not FluentLib then
-        warn("[HateAF] Failed to load Fluent UI library:", loadErr)
-    end
-
-    -- helper to try find the Fluent ScreenGui for toggling visibility (many libs parent to PlayerGui or CoreGui)
-    local function findFluentScreenGui(windowTitle)
-        -- search PlayerGui, CoreGui
-        local function findIn(root)
-            for _, child in ipairs(root:GetChildren()) do
-                if child:IsA("ScreenGui") then
-                    -- try to detect by title label text inside gui
-                    for _, d in ipairs(child:GetDescendants()) do
-                        if d:IsA("TextLabel") and tostring(d.Text or ""):find(windowTitle, 1, true) then
-                            return child
-                        end
-                    end
-                end
-            end
-            return nil
-        end
-        local g = findIn(PlayerGui)
-        if g then return g end
-        local core = game:GetService("CoreGui")
-        g = findIn(core)
-        if g then return g end
-        return nil
-    end
-
-    -- Build UI with Fluent if available; otherwise minimal fallback
-    local Window, Tabs, StatusLabel
-    local lastTabIndex = 1
-    if FluentLib and type(FluentLib.CreateWindow) == "function" then
-        -- create window
-        Window = FluentLib:CreateWindow({
-            Title = "Hate's QoL",
-            SubTitle = "Hate AF",
-            Size = UDim2.fromOffset(720, 480),
-            Acrylic = false,
-            Theme = "Dark"
-        })
-
-        -- build tabs
-        Tabs = {
-            Main = Window:AddTab({ Title = "Main", Icon = "" }),
-            Targeting = Window:AddTab({ Title = "Targeting", Icon = "" }),
-            Egg = Window:AddTab({ Title = "Egg", Icon = "" }),
-            Upgrades = Window:AddTab({ Title = "Upgrades", Icon = "" })
-        }
-
-        -- Status label (top of Main)
-        Tabs.Main:AddParagraph({ Title = "Status", Content = "Status: Idle\nTime: 00:00\nBroken: 0" })
-        StatusLabel = Tabs.Main -- we'll update via SetContent on Main's paragraph if available
-
-        -- Main tab content: buttons (left) and world/area/target (right)
-        Tabs.Main:AddButton({
-            Title = "Pick Best Pets",
-            Description = "Equip best pets from save",
-            Callback = function()
-                local ok = pcall(function()
-                    local chosen = pickTopNFromSave()
-                    if #chosen == 0 then
-                        -- update status
-                        pcall(function() Tabs.Main:AddParagraph({ Title = "Status", Content = "No pets found." }) end)
-                        return
-                    end
-                    trackedPets = chosen
-                    for _, uid in ipairs(trackedPets) do pcall(function() EquipPet(uid) end); task.wait(0.06) end
-                end)
-            end
-        })
-
-        Tabs.Main:AddButton({
-            Title = "Equip Best (Remote)",
-            Description = "Ask server to equip best pets",
-            Callback = function()
-                local ok = EquipBestPetsRemote()
-                pcall(function() Tabs.Main:AddParagraph({ Title = "Status", Content = ok and "Requested remote equip." or "Remote equip failed." }) end)
-            end
-        })
-
-        -- Mode section: create toggles using AddToggle if present
-        local modes = {"Normal","Safe","Blatant","NearestArea","NearestGlobal"}
-        for _, m in ipairs(modes) do
-            Tabs.Main:AddToggle(m, {
-                Text = m,
-                Default = false
-            }, function(state)
-                if state then
-                    Mode = m
-                    -- ensure other toggles off: best-effort (Fluent might provide API to set toggles directly)
-                    -- we simply track Mode variable; UI stay as chosen
-                else
-                    if Mode == m then Mode = "None" end
-                end
-            end)
-        end
-
-        Tabs.Main:AddToggle("SlowMode", { Text = "Slow Mode", Default = false }, function(s) SlowMode = s end)
-
-        -- right-side controls: world/area/target; Fluent AddDropdown returns object with SetValue available
-        local worldList = {}
-        for k,_ in pairs(WorldsTable) do table.insert(worldList, k) end
-        table.sort(worldList)
-
-        Tabs.Main:AddDropdown("World", worldList, false, function(v)
-            SelectedWorld = tostring(v or "")
-            local areas = WorldsTable[SelectedWorld] or {}
-            local first = areas[1]
-            SelectedArea = first or ""
-            -- refresh area dropdown:
-            -- attempt to find area dropdown object and SetValue
-            -- Fluent dropdown set handled by API's OnChanged callback; we will re-create area dropdown below
-        end)
-
-        -- We'll add Area dropdown after World so we can reference it
-        Tabs.Main:AddDropdown("Area", WorldsTable[SelectedWorld] or {}, false, function(v)
-            SelectedArea = tostring(v or "")
-        end)
-
-        Tabs.Main:AddDropdown("Target Type", TargetTypeOptions, false, function(v)
-            TargetType = tostring(v or "Any")
-        end)
-
-        Tabs.Main:AddButton({ Title = "Refresh Areas", Description = "Reload areas for selected world", Callback = function()
-            -- find world selection (we'll re-generate area dropdown in the simplest safe way by re-adding dropdown)
-            -- Fluent doesn't always expose direct API to mutate options; best-effort: re-create or set Value if API present
-            -- We'll attempt to set Area via selecting first area in WorldsTable
-            local areas = WorldsTable[SelectedWorld] or {}
-            SelectedArea = areas[1] or ""
-            pcall(function() Tabs.Main:AddParagraph({ Title = "Status", Content = ("Areas refreshed. First area: %s"):format(SelectedArea) }) end)
-        end })
-
-        Tabs.Targeting:AddDropdown("Target Mode", {"Nearest","Strongest","Random","All"}, false, function(choice)
-            -- set targeting sub-mode (Nearest uses Mode toggles anyway)
-            pcall(function() Tabs.Targeting:AddParagraph({ Title = "Targeting", Content = ("Mode: %s"):format(choice) }) end)
-        end)
-
-        Tabs.Egg:AddButton({ Title = "Disable Egg Hatching Animation (one-shot)", Description = "Try to disable via getgc", Callback = function()
-            local ok = disableEggAnimationOnce()
-            pcall(function() Tabs.Egg:AddParagraph({ Title = "Egg", Content = ok and "Egg animation removed." or "Already disabled." }) end)
-        end })
-
-        Tabs.Upgrades:AddLabel = Tabs.Upgrades.AddLabel or function(_,t) Tabs.Upgrades:AddParagraph({ Title = t, Content = "" }) end
-        Tabs.Upgrades:AddLabel("Auto Fuse (placeholder)")
-        Tabs.Upgrades:AddLabel("Auto Gold (placeholder)")
-        Tabs.Upgrades:AddLabel("Auto Rainbow (placeholder)")
-        Tabs.Upgrades:AddLabel("Auto Dark Matter (placeholder)")
-
-        -- select first tab by default
-        Window:SelectTab(1)
-    else
-        -- fallback minimal UI if Fluent failed: create small ScreenGui and basic controls
-        local gui = Instance.new("ScreenGui", PlayerGui)
-        gui.Name = "HateQoL_Fallback"
-        local frame = Instance.new("Frame", gui)
-        frame.Size = UDim2.new(0,400,0,300)
-        frame.Position = UDim2.new(0,8,0,36)
-        frame.BackgroundColor3 = Color3.fromRGB(18,18,18)
-        Instance.new("UICorner", frame).CornerRadius = UDim.new(0,6)
-        local lab = Instance.new("TextLabel", frame)
-        lab.Size = UDim2.new(1, -16, 0, 20)
-        lab.Position = UDim2.new(0,8,0,6)
-        lab.BackgroundTransparency = 1
-        lab.Text = "Hate's QoL (Fallback)"
-        lab.TextColor3 = Color3.new(1,1,1)
-        -- VERY minimal because Fluent missing
-        warn("[HateAF] Fluent UI not available; fallback UI created (limited).")
-    end
-
-    -- ============ ALWAYS-VISIBLE TOGGLE BUTTON (50x50 top-center) ============
-    local toggleGui = Instance.new("ScreenGui", PlayerGui)
-    toggleGui.Name = "HateQoL_Toggle"
-    toggleGui.ResetOnSpawn = false
-    local toggleBtn = Instance.new("TextButton", toggleGui)
-    toggleBtn.Size = UDim2.new(0,50,0,50)
-    toggleBtn.Position = UDim2.new(0.5, -25, 0, 6) -- top-center
-    toggleBtn.AnchorPoint = Vector2.new(0.5, 0)
-    toggleBtn.Text = "Hate"
-    toggleBtn.Font = Enum.Font.SourceSansBold
-    toggleBtn.TextSize = 16
-    toggleBtn.TextColor3 = Color3.new(1,1,1)
-    toggleBtn.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    toggleBtn.ZIndex = 9999
-    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0,6)
-
-    -- helper to find the Fluent ScreenGui inserted by the library (by window title)
-    local function resolveFluentGui()
-        local title = "Hate's QoL"
-        local sg = findFluentScreenGui(title)
-        return sg
-    end
-
-    local function setFluentVisible(visible)
-        -- attempt to hide/show Fluent's ScreenGui if found; else attempt Window:Hide / Window:Show if available
-        local sg = resolveFluentGui()
-        if sg then
-            sg.Enabled = visible
-            return true
-        end
-        -- try Window API
-        if Window then
-            if visible and type(Window.Show) == "function" then
-                pcall(Window.Show, Window)
-                return true
-            elseif not visible and type(Window.Hide) == "function" then
-                pcall(Window.Hide, Window)
-                return true
-            end
-            -- many libs don't have show/hide; try toggling container property if present
-            if Window.Container and Window.Container.Parent and Window.Container.Visible ~= nil then
-                Window.Container.Visible = visible
-                return true
+    -- ===== UI (minimal in-game) =====
+    -- small instance helper
+    local function new(class, props, parent)
+        local o = Instance.new(class)
+        if props then
+            for k,v in pairs(props) do
+                if k == "Parent" then o.Parent = v else pcall(function() o[k] = v end) end
             end
         end
-        return false
+        if parent and not props then o.Parent = parent end
+        return o
     end
 
-    local currentlyVisible = true
-    toggleBtn.MouseButton1Click:Connect(function()
-        currentlyVisible = not currentlyVisible
-        setFluentVisible(currentlyVisible)
-        -- when showing, restore last tab if Fluent exposes SelectTab
-        if currentlyVisible and Window and type(Window.SelectTab) == "function" and lastTabIndex then
-            pcall(function() Window:SelectTab(lastTabIndex) end)
+    local UI = {}
+    function UI:CreateWindow(title, w,h, pos)
+        local gui = new("ScreenGui", {Name = "HateAF_UI_V2", ResetOnSpawn=false}, PlayerGui)
+        local frame = new("Frame", {
+            Size=UDim2.new(0,w or 420,0,h or 340),
+            Position = pos or UDim2.new(0,8,0,36),
+            BackgroundColor3 = Color3.fromRGB(12,12,12),
+            BorderSizePixel = 0
+        }, gui)
+        new("UICorner",{Parent=frame, CornerRadius=UDim.new(0,6)})
+        local titleLbl = new("TextLabel", {
+            Size=UDim2.new(1,-12,0,22), Position=UDim2.new(0,6,0,6),
+            BackgroundTransparency=1, Font=Enum.Font.SourceSansBold, TextSize=15, TextColor3=Color3.new(1,1,1), Text=title or ""
+        }, frame)
+        return {Gui=gui, Frame=frame, Title=titleLbl}
+    end
+
+    function UI:CreateButton(win, text, pos, size, cb)
+        local btn = new("TextButton", {Size=size or UDim2.new(0.46,-12,0,30), Position=pos, Text=text, Font=Enum.Font.SourceSansBold, TextColor3=Color3.new(1,1,1), BackgroundColor3=Color3.fromRGB(24,24,24)}, win.Frame)
+        new("UICorner",{Parent=btn, CornerRadius=UDim.new(0,6)})
+        btn.MouseButton1Click:Connect(function() pcall(cb) end)
+        return btn
+    end
+
+    function UI:CreateToggle(win, text, pos, cb, default)
+        local btn = new("TextButton", {Size=UDim2.new(0,96,0,28), Position=pos, Text=(text or "") .. (default and " [On]" or " [Off]"), Font=Enum.Font.SourceSans, BackgroundColor3=Color3.fromRGB(24,24,24), TextColor3=Color3.new(1,1,1)}, win.Frame)
+        new("UICorner",{Parent=btn, CornerRadius=UDim.new(0,6)})
+        local state = (default==true)
+        btn.MouseButton1Click:Connect(function() state = not state; btn.Text = (text or "") .. (state and " [On]" or " [Off]"); pcall(function() cb(state) end) end)
+        return {Button=btn, Set=function(v) state=v; btn.Text = (text or "") .. (state and " [On]" or " [Off]") end, Get=function() return state end}
+    end
+
+    function UI:CreateDropdown(win, labelText, pos, width, options, cb)
+        local lbl = new("TextLabel", {Size=UDim2.new(0,width,0,16), Position=pos, BackgroundTransparency=1, Font=Enum.Font.SourceSans, TextSize=13, TextColor3=Color3.new(1,1,1), Text=labelText}, win.Frame)
+        local btn = new("TextButton", {Size=UDim2.new(0,width,0,24), Position=UDim2.new(0,pos.X.Offset,0,pos.Y.Offset+16), Text=options[1] or "None", Font=Enum.Font.SourceSans, BackgroundColor3=Color3.fromRGB(20,20,20), TextColor3=Color3.new(1,1,1)}, win.Frame)
+        new("UICorner",{Parent=btn, CornerRadius=UDim.new(0,6)})
+        local menu = new("Frame", {Size=UDim2.new(0,width,0,math.min(#options*20,200)), Position=UDim2.new(0,pos.X.Offset,0,pos.Y.Offset+44), BackgroundColor3=Color3.fromRGB(18,18,18), Visible=false, Parent=win.Frame})
+        new("UICorner",{Parent=menu, CornerRadius=UDim.new(0,6)})
+        local layout = Instance.new("UIListLayout", menu) layout.Padding = UDim.new(0,4)
+        local function populate(list)
+            for _,c in ipairs(menu:GetChildren()) do if not c:IsA("UIListLayout") then c:Destroy() end end
+            for i,v in ipairs(list) do
+                local b = Instance.new("TextButton", menu)
+                b.Size = UDim2.new(1,-8,0,18); b.Position = UDim2.new(0,4,0,0)
+                b.Text = v; b.BackgroundTransparency = 1; b.Font = Enum.Font.SourceSans; b.TextColor3 = Color3.new(1,1,1); b.TextSize = 13; b.AutoButtonColor = true
+                b.MouseButton1Click:Connect(function() btn.Text = v; menu.Visible = false; pcall(function() cb(v) end) end)
+            end
+            menu.Size = UDim2.new(0, width, 0, math.min(#list*22,200))
+        end
+        populate(options or {})
+        btn.MouseButton1Click:Connect(function() menu.Visible = not menu.Visible end)
+        return {SetOptions=function(new) populate(new) end, SetText=function(t) btn.Text=t end, Button=btn}
+    end
+
+    function UI:CreateLabel(win, txt, pos, size)
+        local lbl = new("TextLabel", {Size=size or UDim2.new(1,-12,0,18), Position=pos, BackgroundTransparency=1, Font=Enum.Font.SourceSans, TextSize=13, TextColor3=Color3.new(1,1,1), Text=txt or ""}, win.Frame)
+        return lbl
+    end
+
+    -- ===== BUILD WINDOWS =====
+    local main = UI:CreateWindow("Hate's Autofarm — V2", 450, 450, UDim2.new(0,8,0,36))
+    local upgrades = UI:CreateWindow("Upgrades (placeholders)", 360, 260, UDim2.new(0,472,0,36)); upgrades.Frame.Visible = false
+    local eggs = UI:CreateWindow("Egg Management", 360, 220, UDim2.new(0,472,0,312)); eggs.Frame.Visible = false
+
+    -- floating show/hide button (top-middle)
+    local floatBtn = Instance.new("TextButton", PlayerGui)
+    floatBtn.Name = "HatesQoL_Float"
+    floatBtn.Size = UDim2.new(0,50,0,50)
+    floatBtn.Position = UDim2.new(0.5, -25, 0, 6)
+    floatBtn.Text = "☰"
+    floatBtn.Font = Enum.Font.SourceSansBold
+    floatBtn.TextSize = 20
+    floatBtn.BackgroundColor3 = Color3.fromRGB(18,18,18)
+    floatBtn.TextColor3 = Color3.new(1,1,1)
+    floatBtn.ZIndex = 9999
+    new("UICorner",{Parent = floatBtn, CornerRadius = UDim.new(0,8)})
+    floatBtn.Visible = true
+
+    floatBtn.MouseButton1Click:Connect(function()
+        main.Frame.Visible = not main.Frame.Visible
+        if not main.Frame.Visible then
+            upgrades.Frame.Visible = false
+            eggs.Frame.Visible = false
         end
     end)
 
-    -- track tab selection for remembering lastTabIndex (best-effort)
-    if Window and type(Window.AddTab) ~= "nil" then
-        -- Fluent does not necessarily provide tab selection hook in same API - attempt to attach to Window.SelectTab method calls:
-        local oldSelect = Window.SelectTab
-        if type(oldSelect) == "function" then
-            Window.SelectTab = function(self, idx)
-                lastTabIndex = idx or lastTabIndex
-                return pcall(oldSelect, self, idx)
+    -- top-right minimize icon inside main (also hide main)
+    local minBtn = new("TextButton", {Size = UDim2.new(0,20,0,20), Position = UDim2.new(1,-26,0,6), Text="–", Font=Enum.Font.SourceSansBold, TextColor3=Color3.new(1,1,1), BackgroundColor3=Color3.fromRGB(18,18,18)}, main.Frame)
+    new("UICorner",{Parent=minBtn, CornerRadius=UDim.new(0,6)})
+    minBtn.MouseButton1Click:Connect(function() main.Frame.Visible = false end)
+
+    -- status (horizontal at top)
+    local statusLabel = UI:CreateLabel(main, ("Mode:%s | World:%s | Area:%s | Pets:%d | Broken:%d | Time:%s"):format(Mode, SelectedWorld, SelectedArea, #trackedPets, brokenCount, "0s"), UDim2.new(0,8,0,30))
+
+    -- top buttons (Pick/Eq Remote)
+    local pickBtn = UI:CreateButton(main, "Pick Best Pets", UDim2.new(0,8,0,64), UDim2.new(0.46,-12,0,36), function()
+        statusLabel.Text = "Equipping best pets..."
+        local chosen = pickTopNFromSave()
+        if #chosen == 0 then statusLabel.Text = "No pets found"; return end
+        trackedPets = chosen
+        for _, uid in ipairs(trackedPets) do pcall(function() EquipPet(uid) end); task.wait(0.06) end
+        task.wait(EQUIP_WAIT)
+        statusLabel.Text = ("Equipped %d pets"):format(#trackedPets)
+    end)
+
+    local equipRemoteBtn = UI:CreateButton(main, "Equip Best (Remote)", UDim2.new(0,236,0,64), UDim2.new(0.46,-12,0,36), function()
+        local ok = EquipBestPetsRemote()
+        statusLabel.Text = ok and "Requested remote equip." or "Remote equip failed."
+    end)
+
+    -- Modes: we'll use toggles but enforce mutual exclusivity programmatically
+    local toggles = {}
+    local function registerModeButton(text, x,y, modeVal)
+        local btn = UI:CreateToggle(main, text, UDim2.new(0,x,0,y), function(state)
+            if state then
+                -- turn off all other mode toggles
+                for _,t in ipairs(toggles) do
+                    if t.mode ~= modeVal then t.handle.Set(false) end
+                end
+                Mode = modeVal
+            else
+                if Mode == modeVal then Mode = "None" end
             end
-        end
+        end, false)
+        table.insert(toggles, {mode=modeVal, handle=btn})
+        return btn
     end
 
-    -- ============ STATUS / UPDATER ============
-    local function updateStatusLabel()
-        local elapsed = (startTime>0) and math.floor(tick()-startTime) or 0
-        local tstr = string.format("%02d:%02d", math.floor(elapsed/60), elapsed%60)
-        local s = ("Mode:%s | World:%s | Area:%s | Pets:%d | Broken:%d | Time:%s"):format(Mode, SelectedWorld, SelectedArea, #trackedPets, brokenCount, tstr)
-        -- try to update Fluent paragraph: simplistic attempt by adding a paragraph (Fluent will handle duplicates)
-        if FluentLib and Window and Window.AddTab then
-            pcall(function()
-                -- attempt to change main tab paragraph content using known API (best-effort)
-                -- Not all Fluent versions expose a direct 'SetContent' function; fallback: add paragraph (harmless)
-                Window:SelectTab(1)
-                Tabs.Main:AddParagraph({ Title = "Status", Content = s })
+    local normalT = registerModeButton("Normal", 8, 116, "Normal")
+    local safeT = registerModeButton("Safe", 120, 116, "Safe")
+    local blatT = registerModeButton("Blatant", 232, 116, "Blatant")
+    local nearestAreaT = registerModeButton("Nearest (Area)", 8, 156, "NearestArea")
+    local nearestGlobalT = registerModeButton("Nearest (Global)", 150, 156, "NearestGlobal")
+    local slowT = UI:CreateToggle(main, "Slow Mode", UDim2.new(0,292,0,116), function(s) SlowMode = s end, false)
+
+    -- target type dropdown
+    local targetDD = UI:CreateDropdown(main, "Target Type", UDim2.new(0,292,0,156), 140, TargetTypeOptions, function(v) TargetType = tostring(v or "Any") end)
+
+    -- world & area dropdowns (5px below buttons)
+    local worldOpts = (function() local t={} for k,_ in pairs(WorldsTable) do table.insert(t,k) end table.sort(t) return t end)()
+    local worldDD = UI:CreateDropdown(main, "World", UDim2.new(0,8,0,220), 220, worldOpts, function(sel)
+        SelectedWorld = tostring(sel or "")
+        local areas = WorldsTable[SelectedWorld] or {}
+        areaDD.SetOptions(areas)
+        if #areas > 0 then SelectedArea = areas[1]; areaDD.SetText(SelectedArea) else SelectedArea = ""; areaDD.SetText("None") end
+        petToTarget = {}; targetToPet = {}; petCooldowns = {}
+    end)
+    worldDD.SetText(SelectedWorld)
+
+    local areaDD = UI:CreateDropdown(main, "Area", UDim2.new(0,236,0,220), 196, WorldsTable[SelectedWorld] or {}, function(sel)
+        SelectedArea = tostring(sel or "")
+        petToTarget = {}; targetToPet = {}; petCooldowns = {}
+    end)
+    areaDD.SetText(SelectedArea)
+
+    local refreshBtn = UI:CreateButton(main, "Refresh Areas", UDim2.new(0,236,0,260), UDim2.new(0.46,-12,0,28), function()
+        local areas = WorldsTable[SelectedWorld] or {}
+        areaDD.SetOptions(areas)
+        if #areas>0 then areaDD.SetText(areas[1]); SelectedArea = areas[1] else areaDD.SetText("None"); SelectedArea = "" end
+        statusLabel.Text = "Areas refreshed"
+    end)
+
+    -- start/stop button full-width bottom
+    local startBtn = UI:CreateButton(main, "Start", UDim2.new(0,8,0,304), UDim2.new(1,-16,0,36), function()
+        Enabled = not Enabled
+        startBtn.Text = Enabled and "Stop" or "Start"
+        startBtn.BackgroundColor3 = Enabled and Color3.fromRGB(178,34,34) or Color3.fromRGB(34,139,34)
+        if Enabled then startTime = tick() else startTime = 0 end
+    end)
+
+    -- eggs & upgrades quick-open buttons
+    local eggBtn = UI:CreateButton(main, "🥚 Egg Management", UDim2.new(0,8,0,352), UDim2.new(0.46,-12,0,36), function()
+        eggs.Frame.Visible = not eggs.Frame.Visible
+    end)
+    local upgradesBtn = UI:CreateButton(main, "🛠️ Upgrades", UDim2.new(0,236,0,352), UDim2.new(0.46,-12,0,36), function()
+        upgrades.Frame.Visible = not upgrades.Frame.Visible
+    end)
+
+    -- eggs window: disable egg animation (one-shot)
+    UI:CreateLabel(eggs, "Egg Management", UDim2.new(0,8,0,24))
+    UI:CreateButton(eggs, "Disable Egg Animation (one-shot)", UDim2.new(0,8,0,56), UDim2.new(1,-16,0,28), function()
+        local ok = disableEggAnimationOnce()
+        eggs.Title.Text = ok and "Egg animation disabled" or "Egg animation already disabled"
+    end)
+
+    -- upgrades placeholders
+    UI:CreateLabel(upgrades, "Auto Fuse (placeholder)", UDim2.new(0,8,0,32))
+    UI:CreateLabel(upgrades, "Auto Gold (placeholder)", UDim2.new(0,8,0,56))
+    UI:CreateLabel(upgrades, "Auto Rainbow (placeholder)", UDim2.new(0,8,0,80))
+    UI:CreateLabel(upgrades, "Auto Dark Matter (placeholder)", UDim2.new(0,8,0,104))
+
+    -- draggable windows (enable)
+    do
+        local function makeDraggable(frame)
+            frame.Active = true
+            local dragging, dragStart, startPos
+            frame.InputBegan:Connect(function(inp)
+                if inp.UserInputType==Enum.UserInputType.MouseButton1 then
+                    dragging=true; dragStart=inp.Position; startPos=frame.Position
+                    inp.Changed:Connect(function() if inp.UserInputState==Enum.UserInputState.End then dragging=false end end)
+                end
             end)
-        else
-            -- fallback: print
-            -- (In fallback UI we created nothing dynamic.)
+            frame.InputChanged:Connect(function(inp)
+                if inp.UserInputType==Enum.UserInputType.MouseMovement and dragging and dragStart and startPos then
+                    local delta = inp.Position - dragStart
+                    frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+                end
+            end)
         end
+        makeDraggable(main.Frame); makeDraggable(upgrades.Frame); makeDraggable(eggs.Frame)
     end
 
+    -- ===== STATUS UPDATER =====
     task.spawn(function()
         while true do
-            pcall(updateStatusLabel)
-            task.wait(0.8)
+            pcall(function()
+                local elapsed = (startTime>0) and math.floor(tick()-startTime) or 0
+                local tstr = string.format("%02d:%02d", math.floor(elapsed/60), elapsed%60)
+                statusLabel.Text = ("Mode:%s | World:%s | Area:%s | Pets:%d | Broken:%d | Time:%s"):format(Mode, SelectedWorld, SelectedArea, #trackedPets, brokenCount, tstr)
+            end)
+            task.wait(0.6)
         end
     end)
 
-    -- ============ MAIN FARM LOOP ============
+    -- ===== MAIN FARM LOOP =====
     task.spawn(function()
         while true do
             if Enabled then
@@ -608,6 +576,7 @@ local ok, mainErr = pcall(function()
                     FreeStaleAssignments(coins)
                     local currentMode = Mode
                     if SlowMode and currentMode == "Blatant" then currentMode = "Normal" end
+
                     if currentMode == "NearestArea" then
                         TargetNearestInArea(coins)
                     elseif currentMode == "NearestGlobal" then
@@ -617,6 +586,8 @@ local ok, mainErr = pcall(function()
                     end
 
                     pcall(function() ClaimOrbs({}) end)
+
+                    -- collect lootbags to player (same as before)
                     pcall(function()
                         local things = Workspace:FindFirstChild("__THINGS") or Workspace:FindFirstChild("__things")
                         if things then
@@ -636,8 +607,7 @@ local ok, mainErr = pcall(function()
         end
     end)
 
-    -- expose console message
-    print("[HateAF] Fluent UI loaded (if available). Toggle button top-center created. Autofarm core running (disabled by default).")
+    print("[HateAF] V2 loaded with Blatant & TargetNearest modes. Modes are mutually exclusive.")
 end)
 
 if not ok then
